@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>设置 · 学习通工具箱</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script type="module" src="./index.js"></script>
+  </head>
+  <body>
+    <div class="page">
+      <header class="page-header">
+        <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="14" rx="3"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18M10 12v3h4v-3"/></svg></div>
+        <div><p class="eyebrow">学习通工具箱 <span id="version"></span></p><h1>全局设置</h1></div>
+      </header>
+      <p class="intro">配置模型服务、功能开关与悬浮框偏好。</p>
+      <nav class="settings-nav" aria-label="设置分类">
+        <a href="#api" aria-current="page">API 设置</a>
+        <a href="#features">功能设置</a>
+        <a href="#floating">悬浮框设置</a>
+      </nav>
+      <main>
+        <section id="settings-api" aria-label="API 设置"></section>
+        <section id="settings-features" aria-label="功能设置" hidden></section>
+        <section id="settings-floating" aria-label="悬浮框设置" hidden></section>
+        <aside class="usage-note">
+          <h2>回到网页开始操作</h2>
+          <p>打开学习通页面，通过页面边缘的迷你工具栏切换功能，也可点击 Edge 扩展图标打开悬浮工具箱。</p>
+          <p>安装或更新后，在 <code>edge://extensions</code> 重新加载扩展，并刷新已打开的学习通页面。</p>
+        </aside>
+      </main>
+      <footer>学习通工具箱 · 页面辅助工具</footer>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,55 @@
+/*
+ * 共享设计令牌：popup 与 options 两类扩展页面的单一来源。
+ * 取值镜像 src/features/floating-toolbox/styles.ts（悬浮框为视觉基准），
+ * 修改任一側时需同步另一側，保持一致的设计语言。
+ */
+:root {
+  color-scheme: light;
+
+  /* 品牌色（teal） */
+  --primary: #0f766e;
+  --primary-hover: #115e59;
+  --focus-ring: #0d9488;
+  --text-on-primary: #fff;
+
+  /* 选中/悬停底色（teal tint） */
+  --tint-bg: #f0fdfa;
+  --tint-bg-strong: #ccfbf1;
+  --tint-border: #99f6e4;
+  --tint-border-strong: #5eead4;
+
+  /* 表面（slate） */
+  --surface-page: #f8fafc;
+  --surface: #fff;
+
+  /* 边框（slate） */
+  --border: #cbd5e1;
+  --border-inner: #e2e8f0;
+  --border-strong: #94a3b8;
+
+  /* 文字（slate） */
+  --text-primary: #0f172a;
+  --text-title: #334155;
+  --text-body: #475569;
+  --text-muted: #64748b;
+
+  /* 警示与错误 */
+  --warning-bg: #fffbeb;
+  --warning-text: #92400e;
+  --warning-border: #fde68a;
+  --error-bg: #fef2f2;
+  --error-text: #b91c1c;
+  --error-border: #fecaca;
+
+  /* 圆角阶（与悬浮框一致：4/6/7） */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 7px;
+
+  /* 控件尺度（与悬浮框一致） */
+  --control-height: 36px;
+  --control-height-sm: 32px;
+
+  /* 字体（与悬浮框 :host 一致） */
+  --font-ui: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
