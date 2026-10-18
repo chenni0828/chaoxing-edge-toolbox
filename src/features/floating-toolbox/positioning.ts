@@ -66,7 +66,6 @@ export function installPositioning(dependencies: {
     host.dataset.placement = opensAbove ? 'above' : 'below';
     host.style.setProperty('--toolbox-surface-width', `${width}px`);
     host.style.setProperty('--toolbox-surface-offset', `${surfaceOffset}px`);
-    host.style.setProperty('--toolbox-anchor-width', `${anchorWidth}px`);
     host.style.setProperty('--toolbox-drawer-height', `${opensAbove ? above : below}px`);
   }
   function clamp(): void {

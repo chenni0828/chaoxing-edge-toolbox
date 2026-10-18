@@ -1,5 +1,6 @@
 import type { AiAnswerController } from '../ai-answer/types';
 import type { ApiStatus } from '../api-settings/types';
+import type { StudyController } from '../chapter-study/types';
 import { WORKSPACES, getDefaultWorkspace, workspaceStyles } from '../workspace-registry';
 import type { ExtractionResponse } from '../../shared/messages';
 import type { Settings } from '../../shared/settings';
@@ -18,6 +19,7 @@ export interface FloatingPanelDependencies {
   openSettings(section?: SettingsSection): Promise<void>;
   getApiStatus(): Promise<ApiStatus>;
   ai: AiAnswerController;
+  study: StudyController;
   loadUiPreferences(): Promise<UiPreferences>;
   saveUiPreferences(value: UiPreferences): Promise<void>;
   version: string;
@@ -143,7 +145,7 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
 
   const views = WORKSPACES.map((workspace) => ({ id: workspace.id, view: workspace.create({
     getSettings: () => settings, saveSettings, extract: dependencies.extract,
-    getApiStatus: dependencies.getApiStatus, openSettings: dependencies.openSettings, ai: dependencies.ai,
+    getApiStatus: dependencies.getApiStatus, openSettings: dependencies.openSettings, ai: dependencies.ai, study: dependencies.study,
   }) }));
   for (const { id, view } of views) {
     view.element.id = `cx-view-${id}`;
@@ -270,13 +272,13 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
   }, { signal });
   window.addEventListener('popstate', () => {
     pageContext = readPageContext(document);
-    if (!workspaceSelected && !dependencies.ai.getState().running) activeView = getDefaultWorkspace(location.href);
+    if (!workspaceSelected && !dependencies.ai.getState().running && !dependencies.study.getState().running) activeView = getDefaultWorkspace(location.href);
     render();
   }, { signal });
   const unsubscribeAi = dependencies.ai.subscribe((state) => { aiIcon.dataset.running = String(state.running); });
   const unsubscribePage = observePageContext(document, (context) => {
     pageContext = context;
-    if (!workspaceSelected && !dependencies.ai.getState().running) activeView = getDefaultWorkspace(location.href);
+    if (!workspaceSelected && !dependencies.ai.getState().running && !dependencies.study.getState().running) activeView = getDefaultWorkspace(location.href);
     render();
   });
 

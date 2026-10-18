@@ -1,6 +1,8 @@
 import { isFeatureId, type FeatureId } from '../features/catalog';
 import type { Settings } from './settings';
 import type { AnswerSnapshot, AnswerWriteRequest, AnswerWriteResult, CurrentQuestion } from '../features/ai-answer/types';
+import type { StudyPageRequest, StudyPageResult } from '../features/chapter-study/types';
+import { isStudyPageRequest, isStudyPageResult } from '../features/chapter-study/protocol';
 
 const CHANNEL = 'chaoxing-toolbox:page:v1';
 export type BridgeMessage =
@@ -9,7 +11,9 @@ export type BridgeMessage =
   | { channel: typeof CHANNEL; kind: 'applied'; revision: number; activeFeatures: FeatureId[]; errors: string[] }
   | { channel: typeof CHANNEL; kind: 'editor-read'; requestId: string }
   | { channel: typeof CHANNEL; kind: 'editor-write'; requestId: string; request: AnswerWriteRequest }
-  | { channel: typeof CHANNEL; kind: 'editor-result'; requestId: string; result: AnswerSnapshot | AnswerWriteResult };
+  | { channel: typeof CHANNEL; kind: 'editor-result'; requestId: string; result: AnswerSnapshot | AnswerWriteResult }
+  | { channel: typeof CHANNEL; kind: 'study-command'; requestId: string; request: StudyPageRequest }
+  | { channel: typeof CHANNEL; kind: 'study-result'; requestId: string; result: StudyPageResult };
 
 export interface PageBridge {
   send(message: BridgeMessage): void;
@@ -63,6 +67,8 @@ export function parseBridgeData(data: unknown): BridgeMessage | null {
   if (value.channel !== CHANNEL) return null;
   if (value.kind === 'ready') return { channel: CHANNEL, kind: 'ready' };
   if (typeof value.requestId === 'string' && /^[\w-]{1,100}$/.test(value.requestId)) {
+    if (value.kind === 'study-command' && isStudyPageRequest(value.request)) return value as unknown as BridgeMessage;
+    if (value.kind === 'study-result' && isStudyPageResult(value.result)) return value as unknown as BridgeMessage;
     if (value.kind === 'editor-read') return value as unknown as BridgeMessage;
     if (value.kind === 'editor-write') {
       const request = value.request as Partial<AnswerWriteRequest> | undefined;

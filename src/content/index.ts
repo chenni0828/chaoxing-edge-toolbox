@@ -13,6 +13,9 @@ import { readSettings, subscribeSettings, writeSettings } from '../platform/stor
 import { bridgeMessage, connectIsolatedBridge } from '../shared/bridge';
 import { COLLECT_QUESTIONS, OPEN_PANEL, type ExtractionResponse, type PageStatus } from '../shared/messages';
 import { defaultSettings, isFeatureEnabled, type Settings } from '../shared/settings';
+import { createStudyFrameClient } from '../features/chapter-study/client';
+import { createStudyController } from '../features/chapter-study/controller';
+import type { StudyController } from '../features/chapter-study/types';
 
 let settings = { ...defaultSettings(), enabled: false };
 let loaded = false;
@@ -21,6 +24,7 @@ let storageEvents = 0;
 let status: PageStatus = { ready: false, enabled: false, activeFeatures: [], errors: [] };
 let floatingPanel: FloatingPanelController | undefined;
 let ai: AiAnswerController | undefined;
+let study: StudyController | undefined;
 
 function apply(next: Settings): void {
   const aiChanged = settings.enabled !== next.enabled || settings.features['ai-answer'] !== next.features['ai-answer'];
@@ -30,10 +34,13 @@ function apply(next: Settings): void {
   status = { ready: false, enabled: settings.enabled, activeFeatures: [], errors: [] };
   bridge.send(bridgeMessage({ kind: 'apply', revision, settings }));
   if (aiChanged) ai?.settingsChanged();
+  studyClient.settingsChanged();
+  study?.settingsChanged();
   floatingPanel?.update(settings);
 }
 
 const bridge = connectIsolatedBridge(window, (message) => {
+  studyClient.receive(message);
   if (message.kind === 'editor-result') editorClient.receive(message);
   else if (message.kind === 'ready' && loaded) bridge.send(bridgeMessage({ kind: 'apply', revision, settings }));
   else if (message.kind === 'applied' && message.revision === revision && loaded) {
@@ -44,6 +51,7 @@ const bridge = connectIsolatedBridge(window, (message) => {
   }
 });
 const editorClient = createEditorClient(bridge);
+const studyClient = createStudyFrameClient(bridge, () => loaded ? settings : undefined);
 subscribeSettings((next) => { storageEvents += 1; apply(next); });
 const startEvents = storageEvents;
 const initialSettings = readSettings().then((next) => {
@@ -52,6 +60,7 @@ const initialSettings = readSettings().then((next) => {
 installQuestionExtraction(() => loaded ? settings : undefined, initialSettings);
 
 if (window === window.top) {
+  study = createStudyController({ document, isEnabled: () => loaded && isFeatureEnabled(settings, 'chapter-study'), runtime: studyClient.runtime });
   ai = createAiAnswerController({
     document,
     isEnabled: () => loaded && isFeatureEnabled(settings, 'ai-answer'),
@@ -76,6 +85,7 @@ if (window === window.top) {
     openSettings,
     getApiStatus,
     ai,
+    study,
     loadUiPreferences: readUiPreferences,
     saveUiPreferences: writeUiPreferences,
     version: chrome.runtime.getManifest().version,

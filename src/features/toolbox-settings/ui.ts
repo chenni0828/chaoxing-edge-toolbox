@@ -21,6 +21,7 @@ export function mountToolboxSettings(root: HTMLElement): () => void {
     'allow-paste': '在网页迷你工具栏或悬浮框中快速开关，直接粘贴到页面输入框或代码编辑器。',
     'question-extract': '在网页悬浮框中提取、编辑预览，逐题复制或复制全部题目。',
     'ai-answer': '在思维阶梯简答题页面，从悬浮框手动开始自动填入；发送答案仍由你操作。',
+    'chapter-study': '启用后进入章节详情页自动学习；在“章节学习”工作区调整起点、倍速和静音，随时暂停或继续。',
   };
   let settings: Settings | undefined;
   let saving = false;

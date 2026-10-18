@@ -1,11 +1,12 @@
 export const UI_SETTINGS_KEY = 'toolbox.ui.v1';
-export type ToolboxView = 'page-tools' | 'answer';
+export type ToolboxView = 'page-tools' | 'answer' | 'chapter-study';
 export type ToolboxViewRequest = ToolboxView | 'question-extract' | 'ai-answer';
 
 /** Keep old open-panel callers working without coupling workspace IDs to features. */
 export function normalizeToolboxView(value: unknown): ToolboxView | undefined {
   if (value === 'page-tools' || value === 'question-extract') return 'page-tools';
   if (value === 'answer' || value === 'ai-answer') return 'answer';
+  if (value === 'chapter-study') return 'chapter-study';
   return undefined;
 }
 

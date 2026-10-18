@@ -2,7 +2,7 @@
   "name": "chaoxing-edge-toolbox",
   "version": "0.2.0",
   "private": true,
-  "description": "按功能组织的学习通 Edge 工具箱：允许粘贴、题目提取、简答题 AI 作答",
+  "description": "按功能组织的学习通 Edge 工具箱：允许粘贴、题目提取、简答题 AI 作答与章节学习",
   "type": "module",
   "engines": {
     "node": ">=22"

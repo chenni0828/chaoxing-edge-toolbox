@@ -5,6 +5,7 @@ import { uiRoutes, subscribeStoredUi } from '../features/floating-toolbox/backgr
 import { extractFromTab } from '../features/question-extract/client';
 import { settingsRoutes, subscribeStoredSettings } from '../features/toolbox-settings/background';
 import { COLLECT_QUESTIONS, OPEN_SETTINGS } from '../shared/messages';
+import { studyRoutes, installStudyBroker } from '../features/chapter-study/background';
 
 async function showSettings(section: unknown): Promise<void> {
   const view = section === 'api' || section === 'floating' ? section : 'features';
@@ -21,6 +22,7 @@ const routes: BackgroundRoutes = {
   ...settingsRoutes,
   ...apiSettingsRoutes,
   ...uiRoutes,
+  ...studyRoutes,
   [COLLECT_QUESTIONS]: { access: 'top-page', handle: async (_message, sender) => extractFromTab(sender.tab!.id!) },
   [OPEN_SETTINGS]: { access: 'public', handle: async (message) => showSettings(message.section) },
 };
@@ -41,3 +43,4 @@ subscribeStoredSettings();
 subscribeStoredApi();
 subscribeStoredUi();
 installAiGenerationBroker();
+installStudyBroker();

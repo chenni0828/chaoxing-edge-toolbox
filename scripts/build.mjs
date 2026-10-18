@@ -13,7 +13,7 @@ export const manifest = {
   manifest_version: 3,
   name: '学习通工具箱',
   version,
-  description: '学习通功能工具箱：允许粘贴、题目提取，以及思维阶梯简答题 AI 生成与填入。',
+  description: '学习通功能工具箱：允许粘贴、题目提取、思维阶梯简答题 AI 生成与填入，以及独立章节学习。',
   minimum_chrome_version: '119',
   permissions: ['storage', 'clipboardWrite'],
   host_permissions: SITE_MATCHES,

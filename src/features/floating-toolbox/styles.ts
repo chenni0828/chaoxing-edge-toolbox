@@ -11,17 +11,20 @@ button, textarea, input { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, [data-drag-handle]:focus-visible { outline: 3px solid #0d9488; outline-offset: 2px; }
 svg { display: block; flex: 0 0 auto; }
 .panel { position: relative; width: 100%; height: ${TOOLBOX_LAYOUT.headerHeight}px; }
+/* The title bar always sits on top of the card and follows the drawer width. */
 .header { position: absolute; top: 0; left: var(--toolbox-surface-offset, 0px); z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 3px; width: var(--toolbox-surface-width, 100%); height: ${TOOLBOX_LAYOUT.headerHeight}px; padding: 3px 5px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 7px 7px 0 0; box-shadow: 0 2px 8px #0f172a10; }
 [data-drag-handle] { cursor: move; touch-action: none; user-select: none; }
-.brand { position: absolute; top: 0; bottom: 0; left: calc(5px - var(--toolbox-surface-offset, 0px)); display: flex; align-items: center; gap: 4px; min-width: 0; max-width: max(0px, calc(var(--toolbox-anchor-width, 164px) - 40px)); overflow: hidden; color: #0f766e; white-space: nowrap; }
+.brand { display: flex; flex: 1 1 auto; align-items: center; gap: 4px; min-width: 0; overflow: hidden; color: #0f766e; white-space: nowrap; }
 .header-title { margin: 0; overflow: hidden; color: #334155; font-size: 10px; font-weight: 600; letter-spacing: .3px; text-overflow: ellipsis; }
 .header-version { flex: 0 0 auto; max-width: 42px; overflow: hidden; color: #64748b; font-size: 9px; font-family: Consolas, monospace; }
 .icon-button { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 1px solid transparent; border-radius: 5px; background: transparent; color: #134e4a; }
 .icon-button:hover { background: #ccfbf1; border-color: #99f6e4; }
 .header .icon-button { flex: 0 0 auto; width: 24px; height: 24px; margin-left: auto; }
 .drawer { position: absolute; top: ${TOOLBOX_LAYOUT.headerHeight - 1}px; left: var(--toolbox-surface-offset, 0px); z-index: 1; display: flex; flex-direction: column; width: var(--toolbox-surface-width, 100%); max-height: var(--toolbox-drawer-height, calc(100dvh - 80px)); overflow: hidden; background: #fff; border: 1px solid #cbd5e1; border-top: 0; border-radius: 0 0 7px 7px; box-shadow: 0 10px 30px #0f172a22; transform-origin: top center; }
-:host([data-placement="above"]) .header { border-radius: 0 0 7px 7px; }
-:host([data-placement="above"]) .drawer { top: auto; bottom: ${TOOLBOX_LAYOUT.headerHeight - 1}px; flex-direction: column-reverse; border-top: 1px solid #cbd5e1; border-bottom: 0; border-radius: 7px 7px 0 0; transform-origin: bottom center; }
+/* Opening upward anchors the whole card at the host bottom, so the title stays on top. */
+:host([data-placement="above"]) .panel { position: absolute; bottom: 0; left: var(--toolbox-surface-offset, 0px); display: flex; flex-direction: column; width: var(--toolbox-surface-width, 100%); height: auto; }
+:host([data-placement="above"]) .header { position: static; width: 100%; }
+:host([data-placement="above"]) .drawer { position: static; width: 100%; transform-origin: bottom center; }
 .body { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 12px; }
 .mini { min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .status-row, .setting-row, .section-heading, .footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -49,7 +52,7 @@ svg { display: block; flex: 0 0 auto; }
 .tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toolbox-action:hover, .toolbox-tab:hover { color: #0f766e; border-color: #5eead4; background: #f0fdfa; }
 .toolbox-action[aria-pressed="true"], .toolbox-tab[aria-selected="true"] { color: #0f766e; border-color: #99f6e4; background: #f0fdfa; }
-.toolbox-tab[data-running="true"] { box-shadow: inset 0 -2px #0f766e; }
+.toolbox-tab[data-view="answer"][data-running="true"] { box-shadow: inset 0 -2px #0f766e; }
 :host([data-minimized="false"]) .toolbox-action[data-action="paste"] { display: none; }
 .toolbox-action:focus-visible, .toolbox-tab:focus-visible, .question-item:focus-visible { outline: 2px solid #0d9488; outline-offset: -3px; }
 :host([data-minimized="true"]) .toolbox-action, :host([data-minimized="true"]) .toolbox-tab { height: 27px; padding: 0; }

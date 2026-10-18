@@ -3,6 +3,10 @@ import { aiAnswerStyles } from './ai-answer/ui/styles';
 import { isThinkLadderUrl } from './ai-answer/adapters/think-ladder';
 import type { AiAnswerController } from './ai-answer/types';
 import type { ApiStatus } from './api-settings/types';
+import { createChapterStudyView } from './chapter-study/ui';
+import { chapterStudyStyles } from './chapter-study/styles';
+import { isChapterStudyUrl } from './chapter-study/adapters/chapter';
+import type { StudyController } from './chapter-study/types';
 import { createPageToolsView } from './page-tools/ui';
 import { questionExtractStyles } from './question-extract/ui/styles';
 import type { ExtractionResponse } from '../shared/messages';
@@ -26,6 +30,7 @@ export interface WorkspaceContext {
   openSettings(section?: SettingsSection): Promise<void>;
   getApiStatus(): Promise<ApiStatus>;
   ai: AiAnswerController;
+  study: StudyController;
 }
 
 /** Register feature workspaces here; the floating shell only reads descriptors. */
@@ -33,7 +38,7 @@ export const WORKSPACES: ReadonlyArray<{
   id: ToolboxView;
   title: string;
   titleOnPage?(context: PageContext): string;
-  icon: 'extract' | 'ai';
+  icon: 'extract' | 'ai' | 'study';
   defaultOnPage?(url: string): boolean;
   create(context: WorkspaceContext): WorkspaceView;
 }> = [
@@ -42,10 +47,11 @@ export const WORKSPACES: ReadonlyArray<{
     const view = createAiAnswerView({ ...context, supported: isThinkLadderUrl(location.href) });
     return { element: view.element, update: view.update, refresh: view.refreshApiStatus, dispose: view.dispose };
   } },
+  { id: 'chapter-study', title: '章节学习', icon: 'study', defaultOnPage: isChapterStudyUrl, create: createChapterStudyView },
 ];
 
 export function getDefaultWorkspace(url: string): ToolboxView {
   return WORKSPACES.find((workspace) => workspace.defaultOnPage?.(url))?.id ?? 'page-tools';
 }
 
-export const workspaceStyles = [questionExtractStyles, aiAnswerStyles].join('\n');
+export const workspaceStyles = [questionExtractStyles, aiAnswerStyles, chapterStudyStyles].join('\n');
