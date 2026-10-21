@@ -21,13 +21,16 @@ export function createChapterStudyView(context: WorkspaceContext): WorkspaceView
   root.setAttribute('aria-label', '章节学习');
   root.innerHTML = `
     <div class="section-heading"><div><h3 class="section-title">章节学习</h3><p class="description">按章节学习视频、课件和阅读任务。</p></div><span class="phase-badge study-phase"></span></div>
-    <div class="setting-row study-enable"><div><h4 class="setting-title">启用章节学习</h4><p class="description">启用后进入章节详情自动学习，可随时暂停。</p></div><input type="checkbox" role="switch" class="switch" aria-label="启用章节学习" disabled></div>
-    <div class="study-preferences">
-      <label class="study-field" for="cx-study-start-mode"><span>学习起点</span><select id="cx-study-start-mode"><option value="first-unfinished">首个未完成任务点</option><option value="current-forward">从当前章节向后</option></select></label>
-      <label class="study-field" for="cx-study-video-quiz"><span>视频内题目（下一个视频生效）</span><select id="cx-study-video-quiz"><option value="random">随机作答</option><option value="ignore">忽略</option></select></label>
+    <div class="setting-row study-enable"><div><h4 class="setting-title" id="cx-study-enable-label">启用章节学习</h4><p class="description" id="cx-study-enable-help">启用后进入章节详情自动学习，可随时暂停。</p></div><input type="checkbox" role="switch" class="switch" aria-labelledby="cx-study-enable-label" aria-describedby="cx-study-enable-help" disabled></div>
+    <fieldset class="study-preferences"><legend>学习设置</legend>
+      <div class="study-preference-grid">
+        <label class="study-field" for="cx-study-start-mode"><span>学习起点</span><select id="cx-study-start-mode"><option value="first-unfinished">首个未完成任务点</option><option value="current-forward">从当前章节向后</option></select></label>
+        <label class="study-field" for="cx-study-video-quiz"><span>视频内题目</span><select id="cx-study-video-quiz" aria-describedby="cx-study-quiz-help"><option value="random">随机作答</option><option value="ignore">忽略</option></select></label>
+      </div>
+      <p class="study-field-help" id="cx-study-quiz-help">视频内题目设置从下一个视频生效。</p>
       <div class="study-media-settings"><label class="study-field" for="cx-study-rate"><span>播放倍速</span><select id="cx-study-rate"></select></label><label class="switch-label study-muted"><span>静音播放</span><input type="checkbox" role="switch" class="switch" data-study-muted aria-label="静音播放"></label><label class="switch-label study-muted"><span>自动续播</span><input type="checkbox" role="switch" class="switch" data-study-auto-resume aria-label="自动续播"></label></div>
       <p class="study-preference-feedback" role="status" aria-live="polite" hidden></p>
-    </div>
+    </fieldset>
     <p class="study-message" role="status" aria-live="polite" aria-atomic="true"></p>
     <div class="study-progress"><p class="study-chapter"></p><p class="study-task"></p><p class="study-count"></p></div>
     <div class="study-actions"><button class="button primary" type="button" data-study-action="start">开始学习</button><button class="button" type="button" data-study-action="stop" hidden>暂停</button></div>

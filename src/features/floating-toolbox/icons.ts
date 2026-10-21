@@ -8,6 +8,7 @@ const paths = {
   expand: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
   minimize: '<path d="M5 12h14"/>',
   reset: '<path d="M4 11a8 8 0 1 1 2 7M4 4v7h7"/>',
+  grip: '<path d="M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01" stroke-width="3"/>',
 } as const;
 
 /** Only static local SVG markup enters the shadow tree through innerHTML. */

@@ -27,7 +27,7 @@ export function createAiAnswerView(dependencies: AiAnswerViewDependencies): AiAn
   const listeners = new AbortController();
   const { signal } = listeners;
   const root = document.createElement('section');
-  root.className = 'feature-view';
+  root.className = 'feature-view ai-answer-view';
   root.setAttribute('aria-label', 'AI 作答');
   root.innerHTML = `
     <div class="section-heading"><div><h3 class="section-title">AI 作答</h3><p class="description">逐题独立生成简答题答案，完整生成后填入。</p></div><span class="phase-badge"></span></div>
@@ -36,8 +36,8 @@ export function createAiAnswerView(dependencies: AiAnswerViewDependencies): AiAn
     <p class="ai-message" role="status" aria-live="polite" aria-atomic="true"></p>
     <div class="ai-question"><p class="editor-label">当前题目 · 简答题</p><p class="question-text"></p><p class="question-meta"></p></div>
     <div class="ai-actions"><button class="button primary" type="button" data-action="start">开始自动填入</button><button class="button" type="button" data-action="stop" hidden>暂停</button><button class="button subtle" type="button" data-action="replace" hidden>仍生成并替换</button><button class="button" type="button" data-action="retry" hidden>重试本题</button></div>
-    <div class="answer-preview" hidden><label class="editor-label" for="cx-ai-answer">生成回答 · 纯文本预览</label><textarea class="editor answer-editor" id="cx-ai-answer" readonly></textarea></div>
-    <p class="editor-hint ai-boundary">只填入答案。发送答案和进入下一题由你操作；刷新页面后保持暂停。</p>
+    <div class="answer-preview" hidden><label class="editor-label" for="cx-ai-answer">生成回答 · 纯文本预览</label><textarea class="editor answer-editor" id="cx-ai-answer" aria-describedby="cx-ai-boundary" readonly></textarea></div>
+    <p class="editor-hint ai-boundary" id="cx-ai-boundary">只填入答案。发送答案和进入下一题由你操作；刷新页面后保持暂停。</p>
   `;
   function element<T extends HTMLElement>(selector: string): T {
     const found = root.querySelector<T>(selector);
@@ -81,6 +81,7 @@ export function createAiAnswerView(dependencies: AiAnswerViewDependencies): AiAn
     enableButton.hidden = !dependencies.supported || !settings?.enabled || enabled;
     enableButton.disabled = saving;
     apiLine.hidden = !dependencies.supported;
+    apiLine.dataset.state = apiError ? 'error' : api?.configured && api.authorized ? 'ready' : 'pending';
     apiText.textContent = apiError || (api ? api.configured && api.authorized ? `API 已配置 · ${api.model}` : api.message || '尚未配置 API' : '正在读取 API 状态…');
     apiButton.textContent = api?.configured && api.authorized ? 'API 设置' : '去配置 API';
     message.textContent = localError || (dependencies.supported ? state.message : '打开思维阶梯答题页后，再开始自动填入。');
@@ -91,7 +92,8 @@ export function createAiAnswerView(dependencies: AiAnswerViewDependencies): AiAn
     questionMeta.hidden = !questionMeta.textContent;
     start.hidden = state.running;
     start.disabled = !dependencies.supported || !enabled || saving || state.phase === 'complete';
-    start.textContent = state.phase === 'needs-config' ? '检查配置并开始' : '开始自动填入';
+    start.textContent = api && (!api.configured || !api.authorized) ? '先配置 API'
+      : state.phase === 'needs-config' ? '检查配置并开始' : '开始自动填入';
     stop.hidden = !state.running;
     replace.hidden = !state.canConfirmReplace || !enabled || !dependencies.supported;
     replace.disabled = saving;
