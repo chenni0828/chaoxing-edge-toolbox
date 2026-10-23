@@ -6,6 +6,8 @@ import { extractFromTab } from '../features/question-extract/client';
 import { settingsRoutes, subscribeStoredSettings } from '../features/toolbox-settings/background';
 import { COLLECT_QUESTIONS, OPEN_SETTINGS } from '../shared/messages';
 import { studyRoutes, installStudyBroker } from '../features/chapter-study/background';
+import { zjoocStudyRoutes, installZjoocStudyBackground } from '../features/zjooc-study/background';
+import { updateCheckRoutes } from '../features/update-check/background';
 
 async function showSettings(section: unknown): Promise<void> {
   const view = section === 'api' || section === 'floating' ? section : 'features';
@@ -23,14 +25,16 @@ const routes: BackgroundRoutes = {
   ...apiSettingsRoutes,
   ...uiRoutes,
   ...studyRoutes,
-  [COLLECT_QUESTIONS]: { access: 'top-page', handle: async (_message, sender) => extractFromTab(sender.tab!.id!) },
+  ...zjoocStudyRoutes,
+  ...updateCheckRoutes,
+  [COLLECT_QUESTIONS]: { access: 'top-page', platforms: ['chaoxing'], handle: async (_message, sender) => extractFromTab(sender.tab!.id!) },
   [OPEN_SETTINGS]: { access: 'public', handle: async (message) => showSettings(message.section) },
 };
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message !== 'object' || typeof message.type !== 'string') return;
   const route = Object.hasOwn(routes, message.type) ? routes[message.type] : undefined;
-  if (!route || !canAccess(route.access, sender)) return;
+  if (!route || !canAccess(route.access, sender, route.platforms)) return;
   void privateStorageReady.then(() => route.handle(message, sender)).then((value) => {
     sendResponse({ ok: true, value });
   }).catch((error) => {
@@ -44,3 +48,4 @@ subscribeStoredApi();
 subscribeStoredUi();
 installAiGenerationBroker();
 installStudyBroker();
+installZjoocStudyBackground();

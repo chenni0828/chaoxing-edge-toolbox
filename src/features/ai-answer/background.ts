@@ -25,7 +25,7 @@ export function installAiGenerationBroker(): void {
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== AI_GENERATION_PORT) return;
     const sender = port.sender;
-    if (!sender || !isSupportedContent(sender) || sender.frameId !== 0 || !isThinkLadderUrl(sender.url ?? '') || sender.tab?.id === undefined) {
+    if (!sender || !isSupportedContent(sender, 'chaoxing') || sender.frameId !== 0 || !isThinkLadderUrl(sender.url ?? '') || sender.tab?.id === undefined) {
       port.disconnect();
       return;
     }

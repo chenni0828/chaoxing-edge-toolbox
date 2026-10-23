@@ -1,5 +1,5 @@
 import { isThinkLadderUrl } from '../features/ai-answer/adapters/think-ladder';
-import { isSupportedUrl } from '../shared/sites';
+import { isPlatformUrl } from '../shared/sites';
 
 export type PageContext = 'homework' | 'think-ladder' | 'generic';
 
@@ -36,7 +36,7 @@ function changesPageStructure(record: MutationRecord): boolean {
 }
 
 export function isHomeworkUrl(value: string): boolean {
-  if (!isSupportedUrl(value)) return false;
+  if (!isPlatformUrl(value, 'chaoxing')) return false;
   try {
     return /^\/(?:mooc-ans\/)?(?:mooc2\/)?work(?:\/|$)/i.test(new URL(value).pathname);
   } catch { return false; }

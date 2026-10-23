@@ -1,5 +1,5 @@
-import { broadcastPublic, privateStorageReady, type BackgroundRoutes } from '../../core/background-context';
-import { FEATURES, isFeatureId } from '../catalog';
+import { broadcastPublic, isExtensionPage, senderPlatform, privateStorageReady, type BackgroundRoutes } from '../../core/background-context';
+import { FEATURES, isFeatureId, isFeatureSupported } from '../catalog';
 import { normalizeSettings, SETTINGS_KEY, type Settings } from '../../shared/settings';
 
 export const SETTINGS_READ = 'toolbox:settings:read';
@@ -15,7 +15,7 @@ export async function readStoredSettings(): Promise<Settings> {
 
 export const settingsRoutes: BackgroundRoutes = {
   [SETTINGS_READ]: { access: 'public', handle: async () => readStoredSettings() },
-  [SETTINGS_WRITE]: { access: 'public', handle: async (message) => {
+  [SETTINGS_WRITE]: { access: 'public', handle: async (message, sender) => {
     const input = message.settings;
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('无效的功能设置。');
     const value = input as Settings;
@@ -25,6 +25,13 @@ export const settingsRoutes: BackgroundRoutes = {
     const next = normalizeSettings(value);
     const task = writes.then(async () => {
       await privateStorageReady;
+      if (!isExtensionPage(sender)) {
+        const current = await readStoredSettings();
+        const platform = senderPlatform(sender);
+        for (const feature of FEATURES) {
+          if (!isFeatureSupported(feature.id, platform)) next.features[feature.id] = current.features[feature.id];
+        }
+      }
       await chrome.storage.local.set({ [SETTINGS_KEY]: next });
     });
     writes = task.catch(() => undefined);

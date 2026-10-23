@@ -1,11 +1,12 @@
-import { FEATURES, type FeatureId } from '../catalog';
+import { FEATURES, isFeatureSupported, type FeatureId } from '../catalog';
+import { getPlatformById, type PlatformId } from '../../shared/sites';
 import { readSettings, subscribeSettings, writeSettings } from '../../platform/storage';
 import type { Settings } from '../../shared/settings';
 
 /** Global feature controls. The options entrypoint owns routing, never feature policy. */
 export function mountToolboxSettings(root: HTMLElement): () => void {
   root.innerHTML = `<div class="card">
-    <div class="section-heading"><h2>功能设置</h2><p>更改后自动保存，并应用到已打开的学习通页面。</p></div>
+    <div class="section-heading"><h2>功能设置</h2><p>按网站自动显示可用功能；更改后自动保存并应用到已打开的页面。</p></div>
     <div class="master-row"><div><label class="control-title" for="master-switch">工具箱总开关</label><p id="master-detail">正在读取设置…</p></div>
     <label class="switch"><input id="master-switch" type="checkbox" role="switch" aria-describedby="master-detail" disabled /><span class="switch-track" aria-hidden="true"></span></label></div>
     <div class="feature-list"></div></div>
@@ -22,6 +23,7 @@ export function mountToolboxSettings(root: HTMLElement): () => void {
     'question-extract': '在网页悬浮框中提取、编辑预览，逐题复制或复制全部题目。',
     'ai-answer': '在思维阶梯简答题页面，从悬浮框手动开始自动填入；发送答案仍由你操作。',
     'chapter-study': '启用后进入章节详情页自动学习；在“章节学习”工作区调整起点、倍速和静音，随时暂停或继续。',
+    'zjooc-study': '启用后进入课程学习详情页自动播放视频、选择平台最高倍速，并点击课件“完成学习”，直至课程最后一节。',
   };
   let settings: Settings | undefined;
   let saving = false;
@@ -88,42 +90,56 @@ export function mountToolboxSettings(root: HTMLElement): () => void {
     }
   }
 
-  for (const feature of FEATURES) {
-    const row = document.createElement('div');
-    row.className = 'feature-row';
-    const copy = document.createElement('div');
-    copy.className = 'feature-copy';
-    const label = document.createElement('label');
-    label.className = 'control-title';
-    label.htmlFor = `feature-${feature.id}`;
-    label.textContent = feature.title;
-    const description = document.createElement('p');
-    description.id = `description-${feature.id}`;
-    description.textContent = feature.description;
-    const location = document.createElement('p');
-    location.className = 'feature-location';
-    location.id = `location-${feature.id}`;
-    location.textContent = locations[feature.id] ?? '在网页悬浮工具箱中操作。';
-    copy.append(label, description, location);
-    const toggle = document.createElement('label');
-    toggle.className = 'switch';
-    const input = document.createElement('input');
-    input.id = label.htmlFor;
-    input.type = 'checkbox';
-    input.disabled = true;
-    input.setAttribute('role', 'switch');
-    input.setAttribute('aria-describedby', `${description.id} ${location.id}`);
-    const track = document.createElement('span');
-    track.className = 'switch-track';
-    track.setAttribute('aria-hidden', 'true');
-    toggle.append(input, track);
-    row.append(copy, toggle);
-    list.append(row);
-    switches.set(feature.id, input);
-    input.addEventListener('change', () => {
-      const enabled = input.checked;
-      void save(current => ({ ...current, features: { ...current.features, [feature.id]: enabled } }), `${feature.title}已${enabled ? '开启' : '关闭'}。`);
-    });
+  for (const platformId of ['chaoxing', 'zjooc'] satisfies PlatformId[]) {
+    const group = document.createElement('section');
+    group.dataset.platform = platformId;
+    const heading = document.createElement('div');
+    heading.className = 'section-heading';
+    const title = document.createElement('h3');
+    title.className = 'control-title';
+    title.id = `platform-${platformId}`;
+    title.textContent = getPlatformById(platformId)?.label ?? platformId;
+    group.setAttribute('aria-labelledby', title.id);
+    heading.append(title);
+    group.append(heading);
+    list.append(group);
+    for (const feature of FEATURES.filter(feature => isFeatureSupported(feature.id, platformId))) {
+      const row = document.createElement('div');
+      row.className = 'feature-row';
+      const copy = document.createElement('div');
+      copy.className = 'feature-copy';
+      const label = document.createElement('label');
+      label.className = 'control-title';
+      label.htmlFor = `feature-${feature.id}`;
+      label.textContent = feature.title;
+      const description = document.createElement('p');
+      description.id = `description-${feature.id}`;
+      description.textContent = feature.description;
+      const location = document.createElement('p');
+      location.className = 'feature-location';
+      location.id = `location-${feature.id}`;
+      location.textContent = locations[feature.id] ?? '在网页悬浮工具箱中操作。';
+      copy.append(label, description, location);
+      const toggle = document.createElement('label');
+      toggle.className = 'switch';
+      const input = document.createElement('input');
+      input.id = label.htmlFor;
+      input.type = 'checkbox';
+      input.disabled = true;
+      input.setAttribute('role', 'switch');
+      input.setAttribute('aria-describedby', `${description.id} ${location.id}`);
+      const track = document.createElement('span');
+      track.className = 'switch-track';
+      track.setAttribute('aria-hidden', 'true');
+      toggle.append(input, track);
+      row.append(copy, toggle);
+      group.append(row);
+      switches.set(feature.id, input);
+      input.addEventListener('change', () => {
+        const enabled = input.checked;
+        void save(current => ({ ...current, features: { ...current.features, [feature.id]: enabled } }), `${feature.title}已${enabled ? '开启' : '关闭'}。`);
+      });
+    }
   }
   master.addEventListener('change', () => {
     const enabled = master.checked;

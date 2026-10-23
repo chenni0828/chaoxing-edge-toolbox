@@ -1,7 +1,7 @@
-import { isSupportedUrl } from '../../../shared/sites';
+import { isPlatformUrl } from '../../../shared/sites';
 
 export function isChapterStudyUrl(value: string): boolean {
-  if (!isSupportedUrl(value)) return false;
+  if (!isPlatformUrl(value, 'chaoxing')) return false;
   return /^\/(?:mooc-ans\/)?mycourse\/studentstudy\/?$/i.test(new URL(value).pathname);
 }
 

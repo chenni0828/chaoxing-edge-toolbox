@@ -1,8 +1,9 @@
 import { getApiStatus } from '../api-settings/client';
 import { openSettings } from '../../platform/settings-navigation';
-import { isSupportedUrl } from '../../shared/sites';
+import { getPlatform, isSupportedUrl } from '../../shared/sites';
 import { isThinkLadderUrl } from '../ai-answer/adapters/think-ladder';
 import { isHomeworkUrl } from '../../platform/page-context';
+import { icon } from './icons';
 
 /** Compact launcher only. In-page feature workspaces own question and answer interaction. */
 export function mountToolboxLauncher(root: HTMLElement): () => void {
@@ -20,6 +21,9 @@ export function mountToolboxLauncher(root: HTMLElement): () => void {
   const panelNote = element<HTMLElement>('#panel-note');
   const apiHint = element<HTMLElement>('#api-hint');
   const apiModel = element<HTMLElement>('#api-model-hint');
+  const apiSummary = element<HTMLElement>('.api-summary');
+  const brand = root.querySelector('.brand-mark');
+  if (brand) brand.innerHTML = icon('logo', 32);
   element<HTMLElement>('#version').textContent = `v${chrome.runtime.getManifest().version}`;
   let opening = false;
   let checking = true;
@@ -46,18 +50,24 @@ export function mountToolboxLauncher(root: HTMLElement): () => void {
   async function inspectPage(): Promise<void> {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      supported = isSupportedUrl(tab?.url);
+      if (disposed) return;
+      const platform = getPlatform(tab?.url);
+      supported = Boolean(platform);
+      const zjooc = platform?.id === 'zjooc';
+      apiSummary.hidden = zjooc;
       const ladder = supported && tab?.url && isThinkLadderUrl(tab.url);
       const homework = supported && tab?.url && isHomeworkUrl(tab.url);
       pageHint.textContent = supported
-        ? ladder ? '思维阶梯练习页' : homework ? '学习通作业页' : '学习通网页'
+        ? zjooc ? '浙学平台' : ladder ? '思维阶梯练习页' : homework ? '学习通作业页' : '学习通网页'
         : '当前页面不支持';
       pageDetails.textContent = supported
-        ? ladder ? '“答题”中生成并填入简答题回答；“思维阶梯”中粘贴、提取题目。'
+        ? zjooc ? '在课程学习详情页启用自动学习，视频使用平台最高倍速，并处理课件“完成学习”。'
+          : ladder ? '“答题”中生成并填入简答题回答；“思维阶梯”中粘贴、提取题目。'
           : homework ? '在“作业”工作区允许粘贴、提取题目；AI 作答目前仅支持思维阶梯。'
             : '可打开页面工具，使用允许粘贴与题目提取，题目以页面识别结果为准。'
-        : '请切换到学习通（chaoxing.com）页面后再打开。';
-      panelNote.textContent = supported ? '' : '工具箱仅在学习通网页内可用';
+        : '请切换到学习通（chaoxing.com）或浙学（www.zjooc.cn）页面。';
+      panelNote.textContent = supported ? '' : '工具箱仅在已支持的网站内可用';
+      if (!zjooc) void inspectApi();
     } catch {
       pageHint.textContent = '无法读取当前页面';
       pageDetails.textContent = '请关闭此窗口后重试。';
@@ -91,8 +101,8 @@ export function mountToolboxLauncher(root: HTMLElement): () => void {
       if (tab?.id === undefined || !isSupportedUrl(tab.url)) {
         supported = false;
         pageHint.textContent = '当前页面不支持';
-        pageDetails.textContent = '请切换到学习通（chaoxing.com）页面后再打开。';
-        panelNote.textContent = '工具箱仅在学习通网页内可用';
+        pageDetails.textContent = '请切换到学习通或浙学页面后再打开。';
+        panelNote.textContent = '工具箱仅在已支持的网站内可用';
         return;
       }
       const result: unknown = await Promise.race([
@@ -101,7 +111,7 @@ export function mountToolboxLauncher(root: HTMLElement): () => void {
       ]);
       if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== true) throw new Error('Page unavailable');
       tell('悬浮工具箱已在网页中打开。');
-    } catch { tell('打开失败。请在 edge://extensions 重新加载扩展，再刷新学习通页面。', true); }
+    } catch { tell('打开失败。请在 edge://extensions 重新加载扩展，再刷新当前学习页面。', true); }
     finally { if (timer !== undefined) clearTimeout(timer); opening = false; render(); }
   }
   const onPanel = () => { void openPanel(); };
@@ -114,7 +124,7 @@ export function mountToolboxLauncher(root: HTMLElement): () => void {
   openPanelButton.addEventListener('click', onPanel);
   openSettingsButton.addEventListener('click', onSettings);
   openApiButton.addEventListener('click', onApiSettings);
-  void Promise.all([inspectPage(), inspectApi()]);
+  void inspectPage();
   return () => {
     disposed = true;
     if (timer !== undefined) clearTimeout(timer);

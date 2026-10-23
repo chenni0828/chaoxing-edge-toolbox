@@ -1,6 +1,6 @@
 export const LEGACY_UI_SETTINGS_KEY = 'toolbox.ui.v1';
 export const UI_SETTINGS_KEY = 'toolbox.ui.v2';
-export type ToolboxView = 'page-tools' | 'answer' | 'chapter-study';
+export type ToolboxView = 'page-tools' | 'answer' | 'chapter-study' | 'zjooc-study';
 export type ToolboxViewRequest = ToolboxView | 'question-extract' | 'ai-answer';
 
 /** Keep old open-panel callers working without coupling workspace IDs to features. */
@@ -8,6 +8,7 @@ export function normalizeToolboxView(value: unknown): ToolboxView | undefined {
   if (value === 'page-tools' || value === 'question-extract') return 'page-tools';
   if (value === 'answer' || value === 'ai-answer') return 'answer';
   if (value === 'chapter-study') return 'chapter-study';
+  if (value === 'zjooc-study') return 'zjooc-study';
   return undefined;
 }
 

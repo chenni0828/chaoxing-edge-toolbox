@@ -32,7 +32,7 @@ export async function readApiStatus(): Promise<ApiStatus> {
 
 let testing = false;
 export const apiSettingsRoutes: BackgroundRoutes = {
-  'toolbox:api:status': { access: 'public', handle: async () => readApiStatus() },
+  'toolbox:api:status': { access: 'public', platforms: ['chaoxing'], handle: async () => readApiStatus() },
   'toolbox:api:read': { access: 'options', handle: async () => readStoredApiConfig() },
   'toolbox:api:save': { access: 'options', handle: async (message) => {
     if (!message.config || typeof message.config !== 'object') throw new Error('无效的 API 设置。');
@@ -75,7 +75,7 @@ export const apiSettingsRoutes: BackgroundRoutes = {
 };
 
 export function subscribeStoredApi(): void {
-  const changed = () => { void broadcastPublic({ type: 'toolbox:api:changed' }); };
+  const changed = () => { void broadcastPublic({ type: 'toolbox:api:changed' }, ['chaoxing']); };
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes[API_SETTINGS_KEY]) changed();
   });

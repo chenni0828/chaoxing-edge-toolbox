@@ -2,7 +2,7 @@ import type { ExtractedQuestion } from '../../question-extract/extract';
 import type { CurrentQuestion, PageQuestionState } from '../types';
 
 const PAGE_PATH = '/mooc2-ans-vue/think-ladder/answer/pc-index';
-const TOOLBOX = '[data-cx-toolbox], #cx-toolbox-root, .ocs-app, [data-ocs], #ocs-app';
+const TOOLBOX = '[data-cx-toolbox], #cx-toolbox-root';
 const OMIT = `script, style, noscript, template, iframe, textarea, button, .tags, .conOld, .preAppendContentBox, ${TOOLBOX}`;
 const BLOCKS = new Set(['P', 'DIV', 'LI', 'H1', 'H2', 'H3', 'H4', 'PRE', 'BLOCKQUOTE', 'TR']);
 

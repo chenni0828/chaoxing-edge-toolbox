@@ -8,20 +8,20 @@ const sessionPrefix = (tabId: number) => `chapter-study.session.${tabId}`;
 const sessionKey = (tabId: number, courseKey: string) => `${sessionPrefix(tabId)}.${encodeURIComponent(courseKey)}`;
 const broadcastCancel = async (tabId: number, runId: string) => { await chrome.tabs.sendMessage(tabId, { type: STUDY_CANCEL, runId }).catch(() => undefined); };
 export const studyRoutes: BackgroundRoutes = {
-  'toolbox:study:preferences:read': { access: 'public', handle: async () => {
+  'toolbox:study:preferences:read': { access: 'public', platforms: ['chaoxing'], handle: async () => {
     await privateStorageReady;
     const stored = await chrome.storage.local.get(STUDY_SETTINGS_KEY);
     return normalizeStudyPreferences(stored[STUDY_SETTINGS_KEY]);
   } },
-  'toolbox:study:preferences:write': { access: 'public', handle: async (message) => {
+  'toolbox:study:preferences:write': { access: 'public', platforms: ['chaoxing'], handle: async (message) => {
     if (!isStudyPreferences(message.preferences)) throw new Error('无效的章节学习设置。');
     await chrome.storage.local.set({ [STUDY_SETTINGS_KEY]: message.preferences });
   } },
-  'toolbox:study:cancel': { access: 'top-page', handle: async (message, sender) => {
+  'toolbox:study:cancel': { access: 'top-page', platforms: ['chaoxing'], handle: async (message, sender) => {
     if (!isStudyId(message.runId)) throw new Error('无效的章节学习任务。');
     await broadcastCancel(sender.tab!.id!, message.runId);
   } },
-  'toolbox:study:session:read': { access: 'top-page', handle: async (message, sender) => {
+  'toolbox:study:session:read': { access: 'top-page', platforms: ['chaoxing'], handle: async (message, sender) => {
     if (typeof message.courseKey !== 'string' || message.courseKey.length > 300) throw new Error('无效的章节学习课程。');
     const tabId = sender.tab!.id!;
     const key = sessionKey(tabId, message.courseKey);
@@ -35,7 +35,7 @@ export const studyRoutes: BackgroundRoutes = {
     await chrome.storage.session.remove(legacyKey);
     return legacy;
   } },
-  'toolbox:study:session:write': { access: 'top-page', handle: async (message, sender) => {
+  'toolbox:study:session:write': { access: 'top-page', platforms: ['chaoxing'], handle: async (message, sender) => {
     if (!isStudySession(message.session)) throw new Error('无效的章节学习运行状态。');
     await chrome.storage.session.set({ [sessionKey(sender.tab!.id!, message.session.courseKey)]: message.session });
   } },
@@ -126,7 +126,7 @@ export function installStudyBroker(): void {
     return { targets, cardReady, warnings: [...new Set(warnings)] };
   };
   chrome.runtime.onConnect.addListener(port => {
-    if (port.name !== STUDY_PORT || !port.sender || !isSupportedContent(port.sender)) return;
+    if (port.name !== STUDY_PORT || !port.sender || !isSupportedContent(port.sender, 'chaoxing')) return;
     const tabId = port.sender.tab!.id!;
     const frameId = port.sender.frameId ?? -1;
     if (frameId < 0) { port.disconnect(); return; }
@@ -231,7 +231,7 @@ export function installStudyBroker(): void {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes[STUDY_SETTINGS_KEY]) void broadcastPublic({
       type: 'toolbox:study:preferences:changed', preferences: normalizeStudyPreferences(changes[STUDY_SETTINGS_KEY].newValue),
-    });
+    }, ['chaoxing']);
   });
   chrome.tabs.onRemoved.addListener(tabId => {
     const peers = tabs.get(tabId);

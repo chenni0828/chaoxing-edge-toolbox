@@ -2,16 +2,16 @@ import { readUiPreferences, resetUiPreferences, subscribeUiPreferences, writeUiP
 import type { UiPreferencePatch, UiSnapshot, UiUpdate } from './preferences';
 
 export function mountAppearanceSettings(root: HTMLElement): () => void {
-  root.innerHTML = `<div class="card">
-    <div class="section-heading"><h2>悬浮框设置</h2><p>调整显示方式，位置和缩小状态会自动保存。</p></div>
-    <div class="settings-form">
-      <div class="field"><label for="floating-state">显示状态</label><select id="floating-state" aria-describedby="floating-state-help" disabled><option value="minimized">缩小为迷你工具栏</option><option value="expanded">展开工作区</option></select><p id="floating-state-help" class="field-help">拖动迷你工具栏上排可调整位置，点击下排图标可快速切换功能。</p></div>
-      <p class="inline-note">思维阶梯默认打开“答题”，其他页面打开对应辅助页：作业、思维阶梯或页面工具。手动切换仅保留在本页，AI 作答刷新后保持暂停。</p>
+  root.innerHTML = `<div class="card appearance-card">
+    <div class="section-heading appearance-heading"><div><h2>悬浮框</h2><p>位置与显示状态在学习页面间同步。</p></div><span class="appearance-save-badge">自动保存</span></div>
+    <div class="appearance-content">
+      <div class="field appearance-mode"><div><label class="control-title" for="floating-state">显示状态</label><p id="floating-state-help" class="field-help">收起更轻巧，展开即可操作。</p></div><select id="floating-state" aria-describedby="floating-state-help" disabled><option value="minimized">收起为迷你工具栏</option><option value="expanded">展开工作区</option></select></div>
       <section class="preference-actions" aria-labelledby="floating-reset-title">
-        <h3 id="floating-reset-title">恢复默认</h3>
-        <div class="preference-action"><div><p class="control-title">仅复位位置</p><p id="floating-position-help" class="field-help">将悬浮框移回默认位置，保留当前显示状态。</p></div><button class="secondary reset-position" type="button" aria-describedby="floating-position-help" disabled>复位位置</button></div>
-        <div class="preference-action"><div><p class="control-title">重置悬浮框偏好</p><p id="floating-reset-help" class="field-help">恢复默认位置和显示状态，保留本页工作区、API 与功能开关。</p></div><button class="text-button reset-floating" type="button" aria-describedby="floating-reset-help" disabled>重置全部偏好</button></div>
+        <h3 id="floating-reset-title">恢复偏好</h3>
+        <div class="preference-action"><div><p class="control-title">默认位置</p><p id="floating-position-help" class="field-help">移回页面右侧，保留当前显示状态。</p></div><button class="secondary reset-position" type="button" aria-describedby="floating-position-help" disabled>复位位置</button></div>
+        <div class="preference-action"><div><p class="control-title">全部悬浮框偏好</p><p id="floating-reset-help" class="field-help">恢复位置与显示状态，保留 API 和功能开关。</p></div><button class="text-button reset-floating" type="button" aria-describedby="floating-reset-help" disabled>恢复默认</button></div>
       </section>
+      <details class="appearance-help"><summary>使用提示</summary><div><p>拖动标题栏调整位置，点击展开按钮查看操作；标题栏支持方向键移动和 Home 复位。</p><p>工具箱会按当前网站显示可用功能。安装或更新后，请重新加载扩展并刷新学习页面。</p></div></details>
     </div></div>
     <div class="feedback" role="status" aria-live="polite" aria-atomic="true" hidden></div>
     <button class="secondary retry-button" type="button" hidden>重新读取设置</button>`;

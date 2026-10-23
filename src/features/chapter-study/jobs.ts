@@ -58,11 +58,19 @@ async function waitForFaceState(scope: StudyTaskScope, active: () => boolean, me
   }
 }
 
-/** 只匹配播放器自身的中文错误文案，不读取 media.error。 */
-function mediaLoadError(doc: Document): boolean {
-  const error = doc.querySelector('.vjs-modal-dialog-content')?.textContent ?? '';
-  return ['视频文件损坏', '网络错误导致视频下载中途失败', '视频因格式不支持', '网络的问题无法加载']
-    .some(message => error.includes(message));
+/** 忽略播放器保留在隐藏弹窗里的旧错误文案。 */
+function mediaLoadError(doc: Document): string {
+  for (const dialog of doc.querySelectorAll<HTMLElement>('.vjs-modal-dialog-content')) {
+    if (dialog.closest('[hidden], [aria-hidden="true"], .vjs-hidden')) continue;
+    let hidden = false;
+    for (let element: HTMLElement | null = dialog; element; element = element.parentElement) {
+      if (element.style.display === 'none' || element.style.visibility === 'hidden') hidden = true;
+    }
+    const text = dialog.textContent ?? '';
+    if (!hidden && ['视频文件损坏', '网络错误导致视频下载中途失败', '视频因格式不支持', '网络的问题无法加载', '视频运行失败']
+      .some(message => text.includes(message))) return text;
+  }
+  return '';
 }
 
 /** Prefer the player's own element over hidden preloads or auxiliary audio nodes. */
@@ -85,8 +93,8 @@ function clickRateControl(doc: Document, rate: number): boolean {
 }
 
 /** Prefer the platform control; fall back to the media element when it is absent or ignored. */
-async function applyStudyRate(doc: Document, media: HTMLMediaElement, rate: number, wait: (ms: number) => Promise<void>): Promise<void> {
-  if (Math.abs(media.playbackRate - rate) < 0.01) return;
+async function applyStudyRate(doc: Document, media: HTMLMediaElement, rate: number, wait: (ms: number) => Promise<void>, syncControl = false): Promise<void> {
+  if (!syncControl && Math.abs(media.playbackRate - rate) < 0.01) return;
   if (clickRateControl(doc, rate)) {
     await wait(120);
     if (Math.abs(media.playbackRate - rate) < 0.01) return;
@@ -129,7 +137,7 @@ async function runVideoQuizLoop(scope: StudyTaskScope, doc: Document): Promise<v
   }
 }
 
-type MediaPlayResult = { ok: true } | { ok: false; message: string };
+type MediaPlayResult = { ok: true } | { ok: false; message: string; blocked?: boolean };
 
 /** 播放被浏览器拦截时，把拒绝原因转成可操作提示。 */
 async function playWithAutoplayResult(media: HTMLMediaElement): Promise<MediaPlayResult> {
@@ -140,7 +148,7 @@ async function playWithAutoplayResult(media: HTMLMediaElement): Promise<MediaPla
     const text = String(error);
     // 浏览器自动播放的提示文案因语言而异，额外用 error name 兜底。
     if (text.includes("failed because the user didn't interact with the document first") || text.includes('NotAllowedError')) {
-      return { ok: false, message: '播放音视频失败：浏览器要求先与页面交互。请先点击一次页面上的任意位置（或播放按钮），再点击“继续学习”，后续无需重复点击。' };
+      return { ok: false, blocked: true, message: '播放音视频失败：浏览器要求先与页面交互。请先点击一次页面上的任意位置（或播放按钮），再点击“继续学习”，后续无需重复点击。' };
     }
     if (text.includes('The element has no supported sources')) {
       return { ok: false, message: '当前视频因格式或编码问题无法播放，请手动处理。' };
@@ -161,7 +169,10 @@ async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, prefe
   const activeMedia = media;
   const originalRate = activeMedia.playbackRate;
   const originalMuted = activeMedia.muted;
+  const originalAutoplay = activeMedia.autoplay;
   let appliedRate = preferences().playbackRate;
+  let requestedRate = appliedRate;
+  let fallbackRate: number | undefined;
   const appliedMuted = preferences().muted;
   const bar = doc.querySelector<HTMLElement>('.vjs-control-bar');
   const previousOpacity = bar?.style.opacity;
@@ -175,17 +186,50 @@ async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, prefe
   return new Promise<StudyTaskOutcome>((resolve, reject) => {
     let settled = false;
     let cleaned = false;
+    let recovering = false;
+    let resumePending = false;
+    let recoveryFailed = false;
+    let playbackGeneration = 0;
+    let ignoredDialog = '';
+    let reloadCleanup: (() => void) | undefined;
     const timers: { reload?: number; start?: number; skip?: number } = {};
+
+    // 降档只属于当前视频；仅用户主动改变倍速时才解除，静音等设置不影响它。
+    function effectiveRate(): number {
+      const selected = preferences().playbackRate;
+      if (selected !== requestedRate) {
+        requestedRate = selected;
+        fallbackRate = undefined;
+      }
+      return Math.min(selected, fallbackRate ?? selected);
+    }
+
+    async function applyRate(syncControl = false): Promise<void> {
+      scope.check();
+      appliedRate = effectiveRate();
+      await applyStudyRate(doc, activeMedia, appliedRate, async ms => {
+        const generation = playbackGeneration;
+        await scope.wait(ms);
+        if (generation !== playbackGeneration) throw new DOMException('播放尝试已被替换。', 'AbortError');
+      }, syncControl);
+      scope.check();
+      // 等待平台菜单期间可能收到新的倍速配置。
+      if (appliedRate !== effectiveRate()) await applyRate();
+    }
 
     function cleanup(): void {
       if (cleaned) return;
       cleaned = true;
+      playbackGeneration += 1;
       if (timers.reload !== undefined) entry.owner.clearInterval(timers.reload);
       if (timers.start !== undefined) entry.owner.clearTimeout(timers.start);
       if (timers.skip !== undefined) entry.owner.clearTimeout(timers.skip);
+      reloadCleanup?.();
       activeMedia.removeEventListener('pause', playFunction);
       activeMedia.removeEventListener('ended', onEnded);
+      activeMedia.removeEventListener('error', onError);
       scope.signal.removeEventListener('abort', cancelled);
+      activeMedia.autoplay = originalAutoplay;
       // Remove the pause listener before pausing so cleanup cannot schedule a new play.
       if (!activeMedia.ended) {
         try { activeMedia.pause(); } catch { /* The document may already be unloading. */ }
@@ -212,26 +256,143 @@ async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, prefe
     }
 
     function onEnded(): void {
+      if (recovering) return;
       finish(acted('音视频播放结束，等待目录绿勾确认。'));
     }
 
+    function skipFailedMedia(): void {
+      if (timers.skip !== undefined || settled) return;
+      timers.skip = entry.owner.setTimeout(() => {
+        finish({ status: 'acted', chapterIncomplete: true, message: '音视频在 1 倍速下仍无法播放，已跳过并继续，请手动检查该任务。' });
+      }, 3000);
+    }
+
+    /** 清除原生错误并等待元数据，之后才能恢复位置；保留播放器及其进度上报插件。 */
+    function reloadMedia(position: number): Promise<boolean> {
+      scope.check();
+      return new Promise(resolveReload => {
+        let finished = false;
+        const complete = (ready: boolean): void => {
+          if (finished) return;
+          finished = true;
+          entry.owner.clearTimeout(timeout);
+          activeMedia.removeEventListener('loadedmetadata', onReady);
+          activeMedia.removeEventListener('error', onFailure);
+          reloadCleanup = undefined;
+          resolveReload(ready);
+        };
+        const onFailure = (): void => complete(false);
+        const onReady = (): void => {
+          try {
+            scope.check();
+            const duration = activeMedia.duration;
+            activeMedia.currentTime = Number.isFinite(duration) && duration > 0 ? Math.min(position, duration) : position;
+            complete(true);
+          } catch { complete(false); }
+        };
+        const timeout = entry.owner.setTimeout(onFailure, 15000);
+        reloadCleanup = onFailure;
+        activeMedia.addEventListener('loadedmetadata', onReady);
+        activeMedia.addEventListener('error', onFailure);
+        try {
+          // Video.js 另存一份错误状态；只清理当前媒体所属的现有播放器。
+          type ExistingPlayer = { el?: () => Element; error?: (value: null) => void };
+          const playerWindow = entry.owner as Window & { videojs?: { getPlayers?: () => Record<string, ExistingPlayer | undefined> } };
+          const players = playerWindow.videojs?.getPlayers?.() ?? {};
+          for (const player of Object.values(players)) {
+            if (player?.el?.()?.contains(activeMedia)) player.error?.(null);
+          }
+          // 禁止 load() 自身的 autoplay，保证关闭续播时仍然停在原位置。
+          activeMedia.autoplay = false;
+          activeMedia.load();
+        } catch { complete(false); }
+      });
+    }
+
+    async function waitForFace(): Promise<void> {
+      if (hasFaceRecognition(entry.owner)) await waitForFaceState(scope, () => hasFaceRecognition(entry.owner), FACE_MESSAGE);
+      if (hasNewFaceRecognition(entry.owner)) await waitForFaceState(scope, () => hasNewFaceRecognition(entry.owner), FACE_MESSAGE);
+    }
+
+    async function recoverMedia(): Promise<void> {
+      if (settled || scope.signal.aborted || timers.skip !== undefined) return;
+      if (recovering) { recoveryFailed = true; return; }
+      recovering = true;
+      playbackGeneration += 1;
+      if (timers.start !== undefined) entry.owner.clearTimeout(timers.start);
+      const position = Number.isFinite(activeMedia.currentTime) ? Math.max(0, activeMedia.currentTime) : 0;
+      try {
+        for (;;) {
+          scope.check();
+          const failedRate = effectiveRate();
+          if (failedRate <= 1) { skipFailedMedia(); return; }
+          fallbackRate = failedRate > 2 ? 2 : 1;
+          appliedRate = fallbackRate;
+          ignoredDialog = mediaLoadError(doc);
+          activeMedia.pause();
+          activeMedia.playbackRate = appliedRate;
+          recoveryFailed = false;
+          const ready = await reloadMedia(position);
+          scope.check();
+          if (settled) return;
+          if (!ready || recoveryFailed) continue;
+          await applyRate(true);
+          if (!mediaLoadError(doc)) ignoredDialog = '';
+          if (!preferences().autoResume) return;
+          await waitForFace();
+          await scope.wait(1000);
+          if (settled || !preferences().autoResume) return;
+          await applyRate();
+          const result = await playWithAutoplayResult(activeMedia);
+          scope.check();
+          if (settled) return;
+          if (!result.ok && result.blocked) { finish(attention(result.message)); return; }
+          if (!result.ok || recoveryFailed) continue;
+          return;
+        }
+      } catch {
+        if (!settled) {
+          try { scope.check(); finish(attention('视频降速恢复失败，请手动检查播放器后继续学习。')); }
+          catch { cancelled(); }
+        }
+      } finally { recovering = false; }
+    }
+
+    function onError(): void {
+      if (activeMedia.error?.code !== 1) void recoverMedia();
+    }
+
+    async function playMedia(): Promise<void> {
+      const generation = playbackGeneration;
+      await applyRate();
+      if (settled || recovering || generation !== playbackGeneration || timers.skip !== undefined) return;
+      const result = await playWithAutoplayResult(activeMedia);
+      if (settled || recovering || scope.signal.aborted || generation !== playbackGeneration) return;
+      scope.check();
+      if (!result.ok) {
+        if (result.blocked) finish(attention(result.message));
+        else await recoverMedia();
+      }
+    }
+
     async function playFunction(): Promise<void> {
-      if (settled || scope.signal.aborted) return;
+      if (settled || scope.signal.aborted || recovering || resumePending || timers.skip !== undefined) return;
       const face = hasFaceRecognition(entry.owner) || hasNewFaceRecognition(entry.owner);
       // 普通暂停遵循“自动续播”开关；人脸校验结束后总是继续，
       // 避免校验完成后播放被永久卡住。
       if (!preferences().autoResume && !face) return;
+      resumePending = true;
+      const generation = playbackGeneration;
       try {
-        if (hasFaceRecognition(entry.owner)) await waitForFaceState(scope, () => hasFaceRecognition(entry.owner), FACE_MESSAGE);
-        if (hasNewFaceRecognition(entry.owner)) await waitForFaceState(scope, () => hasNewFaceRecognition(entry.owner), FACE_MESSAGE);
+        await waitForFace();
         if (activeMedia.ended === false) {
           await scope.wait(1000);
-          if (settled || scope.signal.aborted) return;
-          activeMedia.play().catch(() => undefined);
-          appliedRate = preferences().playbackRate;
-          activeMedia.playbackRate = appliedRate;
+          if (settled || scope.signal.aborted || recovering || generation !== playbackGeneration || (!preferences().autoResume && !face)) return;
+          await playMedia();
         }
-      } catch { /* Cancelled while waiting for the face check or the resume delay. */ }
+      } catch {
+        if (!settled && !scope.signal.aborted && generation === playbackGeneration) void recoverMedia();
+      } finally { resumePending = false; }
     }
 
     if (scope.signal.aborted) {
@@ -240,11 +401,12 @@ async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, prefe
     }
     activeMedia.addEventListener('pause', playFunction);
     activeMedia.addEventListener('ended', onEnded);
+    activeMedia.addEventListener('error', onError);
     scope.signal.addEventListener('abort', cancelled, { once: true });
     // Install cleanup before the speed menu's asynchronous initialization can be cancelled.
     scope.add(cleanup);
+    const initialGeneration = playbackGeneration;
     const initialize = async (): Promise<void> => {
-      await applyStudyRate(doc, activeMedia, appliedRate, ms => scope.wait(ms));
       scope.check();
       if (settled) return;
       fixedVideoProgress(doc);
@@ -255,30 +417,25 @@ async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, prefe
       activeMedia.currentTime = 0;
 
       timers.reload = entry.owner.setInterval(() => {
-        if (settled || timers.skip !== undefined || !mediaLoadError(doc)) return;
-        console.error('检测到视频加载失败，即将跳过视频。');
-        timers.skip = entry.owner.setTimeout(() => {
-          finish({ status: 'acted', chapterIncomplete: true, message: '检测到音视频加载失败，已跳过并继续。' });
-        }, 3000);
+        if (settled || recovering || timers.skip !== undefined) return;
+        const dialog = mediaLoadError(doc);
+        if (!dialog) ignoredDialog = '';
+        if ((activeMedia.error && activeMedia.error.code !== 1) || (dialog && dialog !== ignoredDialog)) void recoverMedia();
       }, 3000);
 
+      const generation = playbackGeneration;
+      await applyRate();
+      if (settled || generation !== playbackGeneration) return;
       timers.start = entry.owner.setTimeout(() => {
-        void playWithAutoplayResult(activeMedia).then((result) => {
-          if (settled) return;
-          if (!result.ok) {
-            finish({ status: 'attention', message: result.message });
-            return;
-          }
-          appliedRate = preferences().playbackRate;
-          activeMedia.playbackRate = appliedRate;
-        });
+        void playMedia().catch(() => { if (!settled && generation === playbackGeneration) void recoverMedia(); });
       }, 200);
     };
     void initialize().catch(error => {
       if (settled) return;
-      settled = true;
-      cleanup();
-      reject(error);
+      if (initialGeneration !== playbackGeneration) return;
+      if (scope.signal.aborted) { cancelled(); return; }
+      if (error instanceof DOMException && error.name === 'AbortError') { cancelled(); return; }
+      void recoverMedia();
     });
   });
 }

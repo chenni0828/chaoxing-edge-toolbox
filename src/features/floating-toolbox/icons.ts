@@ -1,5 +1,5 @@
 const paths = {
-  logo: '<path d="m5 17 7-13 7 13-7-4-7 4Z"/><path d="M12 13v7"/>',
+  logo: '<rect width="128" height="128" rx="28" fill="#0f766e"/><path d="M31 32h26c5 0 7 4 7 8 0-4 2-8 7-8h26v61H71c-4 0-7 3-7 6-1-3-4-6-7-6H31z" fill="#fff"/><path d="M64 40v52M40 48h13M40 60h13M76 48h12M76 60h12M76 72h12" fill="none" stroke="#0f766e" stroke-width="5" stroke-linecap="round"/>',
   paste: '<path d="M9 5V3h6v2M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="8" y="4" width="8" height="4" rx="1"/><path d="M8 13h8m-8 4h6"/>',
   extract: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8m-8 4h5"/>',
   ai: '<path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3ZM19 3v4m-2-2h4"/>',
@@ -13,5 +13,6 @@ const paths = {
 
 /** Only static local SVG markup enters the shadow tree through innerHTML. */
 export function icon(name: keyof typeof paths, size = 18): string {
+  if (name === 'logo') return `<svg viewBox="0 0 128 128" width="${size}" height="${size}" aria-hidden="true">${paths.logo}</svg>`;
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
 }

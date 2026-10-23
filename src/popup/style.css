@@ -1,7 +1,9 @@
 @import '../core/design-tokens.css';
 
 * { box-sizing: border-box; }
-body { width: 340px; max-width: 100vw; margin: 0; background: var(--surface-page); color: var(--text-primary); font: var(--font-ui); }
+/* The browser sizes its action popup from this document's intrinsic width. */
+html, body { width: 340px; min-width: 340px; }
+body { margin: 0; background: var(--surface-page); color: var(--text-primary); font: var(--font-ui); }
 h1, p { margin: 0; overflow-wrap: anywhere; }
 button { font: inherit; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 button:disabled { cursor: not-allowed; }
@@ -9,8 +11,8 @@ button:disabled { cursor: not-allowed; }
 :focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 header { display: flex; align-items: center; gap: 10px; padding: 12px; background: var(--surface); border-bottom: 1px solid var(--border-inner); }
-.brand-mark { display: grid; place-items: center; flex: 0 0 32px; height: 32px; border-radius: var(--radius-md); background: var(--primary); color: var(--text-on-primary); }
-.brand-mark svg { width: 20px; height: 20px; }
+.brand-mark { display: grid; place-items: center; flex: 0 0 32px; height: 32px; }
+.brand-mark svg { display: block; width: 32px; height: 32px; }
 .brand-copy { flex: 1; min-width: 0; }
 h1 { color: var(--text-title); font-size: 14px; line-height: 1.5; }
 .brand-copy p { color: var(--text-muted); font-size: 11px; }
@@ -43,10 +45,4 @@ main { padding: 12px; }
 .footnote { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-inner); color: var(--text-muted); font-size: 11px; line-height: 1.65; }
 .footnote .version { font-family: Consolas, monospace; }
 button { transition: background-color 140ms, color 140ms, border-color 140ms, box-shadow 140ms; }
-@media (max-width: 280px) {
-  header { gap: 8px; }
-  .brand-mark { display: none; }
-  .api-summary { align-items: flex-start; flex-direction: column; gap: 10px; }
-  .api-link { width: 100%; }
-}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
