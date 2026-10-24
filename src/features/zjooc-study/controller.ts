@@ -293,6 +293,8 @@ export function createZjoocStudyController({ document: doc, isEnabled, runtime, 
         if (!media.isConnected || pane?.querySelector('video') !== media) throw new Attention('正在等待新的播放器就绪。');
         return pane;
       };
+      assertMedia();
+      media.muted = true;
       if (media.error) {
         current.recovery ??= { media, position: media.currentTime };
         if (current.recovery.media !== media) current.recovery = { media, position: media.currentTime };

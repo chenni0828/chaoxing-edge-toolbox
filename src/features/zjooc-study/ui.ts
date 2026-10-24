@@ -17,7 +17,7 @@ export function createZjoocStudyView(context: WorkspaceContext): WorkspaceView {
   root.setAttribute('aria-label', '浙学章节学习');
   root.innerHTML = `
     <div class="zjooc-heading"><h3 class="section-title">章节学习</h3><span class="phase-badge" data-zjooc-phase></span></div>
-    <label class="setting-row zjooc-enable"><span><span class="setting-title">启用自动学习</span><span class="description">自动播放视频，使用平台最高倍速。</span></span><input type="checkbox" role="switch" class="switch" aria-label="启用浙学自动学习" disabled></label>
+    <label class="setting-row zjooc-enable"><span><span class="setting-title">启用自动学习</span><span class="description">自动静音播放，使用平台最高倍速。</span></span><input type="checkbox" role="switch" class="switch" aria-label="启用浙学自动学习" disabled></label>
     <div class="zjooc-progress">
       <p class="zjooc-project"></p><p class="zjooc-chapter"></p><p class="zjooc-resource"></p>
       <p class="zjooc-rate"></p><p class="zjooc-message" role="status" aria-live="polite" aria-atomic="true"></p>

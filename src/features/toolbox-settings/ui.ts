@@ -23,7 +23,7 @@ export function mountToolboxSettings(root: HTMLElement): () => void {
     'question-extract': '在网页悬浮框中提取、编辑预览，逐题复制或复制全部题目。',
     'ai-answer': '在思维阶梯简答题页面，从悬浮框手动开始自动填入；发送答案仍由你操作。',
     'chapter-study': '启用后进入章节详情页自动学习；在“章节学习”工作区调整起点、倍速和静音，随时暂停或继续。',
-    'zjooc-study': '启用后进入课程学习详情页自动播放视频、选择平台最高倍速，并点击课件“完成学习”，直至课程最后一节。',
+    'zjooc-study': '启用后进入课程学习详情页自动静音播放视频、选择平台最高倍速，并点击课件“完成学习”，直至课程最后一节。',
   };
   let settings: Settings | undefined;
   let saving = false;
