@@ -4,6 +4,7 @@ import { bridgeMessage, installMainBridge } from '../shared/bridge';
 import { readUeditorAnswer, writeUeditorAnswer } from '../features/ai-answer/editor';
 import { handleStudyPageRequest } from '../features/chapter-study/page';
 import { getDocumentPlatform } from '../shared/sites';
+import { handleAnswerPageCommand } from '../features/question-answer/page';
 
 function install(): void {
   const platform = getDocumentPlatform(window);
@@ -12,6 +13,14 @@ function install(): void {
   let revision = 0;
 
   const bridge = installMainBridge(window, (message) => {
+    if (message.kind === 'answer-command') {
+      void handleAnswerPageCommand(window, message.command).then(result => {
+        bridge.send(bridgeMessage({ kind: 'answer-result', requestId: message.requestId, result }));
+      }).catch(() => {
+        bridge.send(bridgeMessage({ kind: 'answer-result', requestId: message.requestId, result: { ok: false, error: '题目页面操作失败，请暂停后重试。' } }));
+      });
+      return;
+    }
     if (message.kind === 'study-command') {
       void handleStudyPageRequest(window, message.request).then(result => {
         bridge.send(bridgeMessage({ kind: 'study-result', requestId: message.requestId, result }));

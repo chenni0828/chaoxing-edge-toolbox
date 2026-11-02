@@ -1,0 +1,90 @@
+export type QuestionKind = 'single' | 'multiple' | 'judgement' | 'completion' | 'line' | 'fill' | 'reader' | 'unsupported';
+export type AnswerSourceMode = 'prefer-bank' | 'bank' | 'ai';
+export type AnswerSource = 'bank' | 'bank-ai' | 'ai' | 'import' | 'local-bank';
+export type CompletionPolicy = 'save' | 'submit' | 'stay';
+export const ANSWER_PREFERENCES_KEY = 'toolbox.question-answer.preferences.v1';
+export interface AnswerSourcesStatus {
+  selection: AnswerSourceMode | null;
+  bank: { configured: boolean; authorized: boolean };
+  ai: { configured: boolean; authorized: boolean; enabled: boolean };
+}
+export interface QuestionOption { id: string; label: string; text: string }
+export interface QuestionField { id: string; options?: QuestionOption[] }
+export interface QuestionChild { id: string; stem: string; options: QuestionOption[] }
+export const QUESTION_MARKDOWN_LIMIT = 128_000;
+export interface QuestionTextRecognition {
+  status: 'pending' | 'partial' | 'unavailable';
+  unresolvedCount: number;
+  /** Page source codes, explicitly not the recovered visible text. */
+  unresolved: Array<{ raw: string; count: number }>;
+}
+export interface QuestionSnapshot {
+  key: string; fingerprint: string; number: string; kind: QuestionKind; stem: string;
+  options: QuestionOption[]; fields: QuestionField[]; children: QuestionChild[]; images: string[];
+  supported: boolean; reason?: string;
+  textRecognition?: QuestionTextRecognition;
+  /** Read-only, fully formatted copy text captured alongside the question; never an answer input. */
+  markdown?: string;
+}
+export interface ApplicableAnswer {
+  choices?: string[]; texts?: string[]; matches?: string[];
+  children?: Array<{ id: string; choices: string[] }>;
+}
+export interface AnswerControlSnapshot {
+  ready: boolean; version: string; hasContent: boolean; complete: boolean; answer: ApplicableAnswer; error?: string;
+}
+export interface QuestionPageSnapshot {
+  documentKey: string; scopeKey: string; scene: 'chapter-test' | 'homework' | 'exam' | 'unsupported';
+  questions: QuestionSnapshot[]; complete: boolean; allLoaded: boolean; canSave: boolean; canSubmit: boolean; reason?: string;
+}
+export interface QuestionTarget {
+  frameId: number; documentId?: string; documentKey: string; scopeKey: string; question: QuestionSnapshot;
+}
+export interface ImportedAnswer { target: QuestionTarget; answer: ApplicableAnswer }
+export interface PreparedQuestion {
+  question: QuestionSnapshot; images: string[]; suggestionTitle: string; suggestionOptions: string;
+}
+export interface AnswerResult {
+  status: 'answer' | 'no-answer'; source: AnswerSource; text: string; answer?: ApplicableAnswer;
+  tags?: Array<{ text: string; title?: string; color?: string }>; message?: string;
+}
+export interface QuestionIdentity { documentKey: string; scopeKey: string; key: string; fingerprint: string }
+export type AnswerPageCommand =
+  | { action: 'inspect' }
+  | ({ action: 'read' | 'images' } & QuestionIdentity)
+  | ({ action: 'write'; expectedVersion: string; answer: ApplicableAnswer; replace: boolean } & QuestionIdentity)
+  | { action: 'finish'; documentKey: string; scopeKey: string; policy: 'save' | 'submit';
+      expected: Array<{ key: string; fingerprint: string; version: string }> }
+  | { action: 'cancel' };
+export interface AnswerPageResult {
+  ok: boolean; error?: string; snapshot?: QuestionPageSnapshot; control?: AnswerControlSnapshot;
+  prepared?: PreparedQuestion; outcome?: 'saved' | 'submitted';
+}
+export type AnswerRowPhase = 'pending' | 'querying' | 'filled' | 'existing' | 'unsupported' | 'error' | 'needs-review';
+export interface AnswerRow {
+  id: string; target: QuestionTarget; phase: AnswerRowPhase; message: string; text: string;
+  source?: AnswerSource; tags?: AnswerResult['tags'];
+  currentAnswer?: ApplicableAnswer; readOnly?: boolean;
+}
+export interface AnswerPaper {
+  id: string; frameId: number; documentId?: string; documentKey: string; scopeKey: string;
+  scene: QuestionPageSnapshot['scene']; allLoaded: boolean; complete: boolean; rowIds: string[];
+}
+export interface QuestionAnswerState {
+  phase: 'idle' | 'scanning' | 'running' | 'paused' | 'complete' | 'error'; running: boolean;
+  source: AnswerSourceMode | null; rows: AnswerRow[]; message: string;
+  sources?: AnswerSourcesStatus; sourcesError?: string; sourceSaving?: boolean;
+  selectedId?: string; activeId?: string; followProgress?: boolean;
+  previewing?: boolean; previewStale?: boolean; papers?: AnswerPaper[];
+  completion?: 'saving' | 'submitting' | 'saved' | 'submitted' | 'unconfirmed';
+}
+export interface QuestionAnswerController {
+  getState(): QuestionAnswerState;
+  subscribe(listener: (state: QuestionAnswerState) => void): () => void;
+  start(): void; stop(): void; retry(id: string, replace?: boolean): void; setSource(source: AnswerSourceMode): void;
+  refreshSources(): void; settingsChanged(): void; dispose(): void;
+  preview?(): void; selectQuestion?(id: string): void; followProgress?(): void;
+  applyImportedAnswers?(entries: ImportedAnswer[], source?: 'import' | 'local-bank'): Promise<void>;
+}
+export const ANSWER_FRAME_PORT = 'toolbox:question-answer:frames:v1';
+export const ANSWER_GENERATION_PORT = 'toolbox:question-answer:generate:v1';

@@ -8,9 +8,15 @@ import { COLLECT_QUESTIONS, OPEN_SETTINGS } from '../shared/messages';
 import { studyRoutes, installStudyBroker } from '../features/chapter-study/background';
 import { zjoocStudyRoutes, installZjoocStudyBackground } from '../features/zjooc-study/background';
 import { updateCheckRoutes } from '../features/update-check/background';
+import { questionBankRoutes, subscribeStoredQuestionBank } from '../features/question-bank/background';
+import { localQuestionBankRoutes } from '../features/local-question-bank/background';
+import { pacingRoutes, subscribeStoredPacing } from '../features/answer-pacing/background';
+import { answerSourceRoutes, subscribeStoredAnswerSource } from '../features/question-answer/source-background';
+import { installQuestionAnswerBroker } from '../features/question-answer/background';
+import { installQuestionGenerationBroker } from '../features/question-answer/generation-background';
 
 async function showSettings(section: unknown): Promise<void> {
-  const view = section === 'api' || section === 'floating' ? section : 'features';
+  const view = section === 'api' || section === 'floating' || section === 'question-bank' ? section : 'features';
   const base = chrome.runtime.getURL('options/index.html');
   const contexts = await chrome.runtime.getContexts({ contextTypes: ['TAB'] });
   const existing = contexts.find((context) => context.documentUrl?.split('#')[0] === base && context.tabId >= 0);
@@ -23,6 +29,10 @@ async function showSettings(section: unknown): Promise<void> {
 const routes: BackgroundRoutes = {
   ...settingsRoutes,
   ...apiSettingsRoutes,
+  ...questionBankRoutes,
+  ...localQuestionBankRoutes,
+  ...pacingRoutes,
+  ...answerSourceRoutes,
   ...uiRoutes,
   ...studyRoutes,
   ...zjoocStudyRoutes,
@@ -45,7 +55,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 subscribeStoredSettings();
 subscribeStoredApi();
+subscribeStoredPacing();
+subscribeStoredQuestionBank();
+subscribeStoredAnswerSource();
 subscribeStoredUi();
 installAiGenerationBroker();
+installQuestionAnswerBroker();
+installQuestionGenerationBroker();
 installStudyBroker();
 installZjoocStudyBackground();

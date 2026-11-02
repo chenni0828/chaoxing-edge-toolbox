@@ -3,6 +3,8 @@ import type { Settings } from './settings';
 import type { AnswerSnapshot, AnswerWriteRequest, AnswerWriteResult, CurrentQuestion } from '../features/ai-answer/types';
 import type { StudyPageRequest, StudyPageResult } from '../features/chapter-study/types';
 import { isStudyPageRequest, isStudyPageResult } from '../features/chapter-study/protocol';
+import type { AnswerPageCommand, AnswerPageResult } from '../features/question-answer/types';
+import { isAnswerPageCommand, isAnswerPageResult } from '../features/question-answer/protocol';
 
 const CHANNEL = 'chaoxing-toolbox:page:v1';
 export type BridgeMessage =
@@ -12,6 +14,8 @@ export type BridgeMessage =
   | { channel: typeof CHANNEL; kind: 'editor-read'; requestId: string }
   | { channel: typeof CHANNEL; kind: 'editor-write'; requestId: string; request: AnswerWriteRequest }
   | { channel: typeof CHANNEL; kind: 'editor-result'; requestId: string; result: AnswerSnapshot | AnswerWriteResult }
+  | { channel: typeof CHANNEL; kind: 'answer-command'; requestId: string; command: AnswerPageCommand }
+  | { channel: typeof CHANNEL; kind: 'answer-result'; requestId: string; result: AnswerPageResult }
   | { channel: typeof CHANNEL; kind: 'study-command'; requestId: string; request: StudyPageRequest }
   | { channel: typeof CHANNEL; kind: 'study-result'; requestId: string; result: StudyPageResult };
 
@@ -67,6 +71,8 @@ export function parseBridgeData(data: unknown): BridgeMessage | null {
   if (value.channel !== CHANNEL) return null;
   if (value.kind === 'ready') return { channel: CHANNEL, kind: 'ready' };
   if (typeof value.requestId === 'string' && /^[\w-]{1,100}$/.test(value.requestId)) {
+    if (value.kind === 'answer-command' && isAnswerPageCommand(value.command)) return value as unknown as BridgeMessage;
+    if (value.kind === 'answer-result' && isAnswerPageResult(value.result)) return value as unknown as BridgeMessage;
     if (value.kind === 'study-command' && isStudyPageRequest(value.request)) return value as unknown as BridgeMessage;
     if (value.kind === 'study-result' && isStudyPageResult(value.result)) return value as unknown as BridgeMessage;
     if (value.kind === 'editor-read') return value as unknown as BridgeMessage;

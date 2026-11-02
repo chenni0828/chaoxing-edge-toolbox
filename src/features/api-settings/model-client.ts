@@ -1,6 +1,7 @@
 import type { ApiConfig } from './types';
 
-export interface ChatMessage { role: 'system' | 'user'; content: string }
+export type ChatContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
+export interface ChatMessage { role: 'system' | 'user'; content: string | ChatContentPart[] }
 
 export class ModelRequestError extends Error {
   constructor(public readonly code: string, message: string) { super(message); this.name = 'ModelRequestError'; }

@@ -1,0 +1,428 @@
+import type { StudyTarget, StudyTaskOutcome } from '../chapter-study/types';
+import type { AnswerRuntime } from './client';
+import type { AnswerFrameSnapshot } from './background';
+import { planAnswerSource } from './source-status';
+import { normalizeAnswer } from './normalize';
+import type { PacingWait } from '../answer-pacing/scheduler';
+import type {
+  AnswerControlSnapshot, AnswerPageCommand, AnswerPaper, AnswerResult, AnswerRow, AnswerSourceMode, AnswerSourcesStatus, CompletionPolicy,
+  ImportedAnswer, PreparedQuestion, QuestionAnswerController, QuestionAnswerState, QuestionTarget,
+} from './types';
+
+interface Dependencies {
+  runtime: AnswerRuntime; isEnabled(): boolean;
+  canPreview?(): boolean;
+  getSources(): Promise<AnswerSourcesStatus>;
+  saveSource(source: AnswerSourceMode): Promise<void>;
+  generate(prepared: PreparedQuestion, source: AnswerSourceMode, signal: AbortSignal, progress: (text: string) => void, status?: (text: string) => void): Promise<AnswerResult>;
+  waitBeforeFill?: PacingWait;
+  watchInterval?: number;
+}
+export interface ChapterAnswerController extends QuestionAnswerController {
+  runChapter(target: StudyTarget, signal: AbortSignal, policy: CompletionPolicy): Promise<StudyTaskOutcome>;
+}
+interface Run {
+  abort: AbortController; chapter?: StudyTarget; policy?: CompletionPolicy; onlyId?: string; replace?: boolean;
+  checkedVersions?: Map<string, string>;
+  source?: AnswerSourceMode;
+  invalidated?: boolean;
+  imported?: Map<string, ImportedAnswer>;
+  importSource?: 'import' | 'local-bank';
+}
+const identity = (target: QuestionTarget) => ({ documentKey: target.documentKey, scopeKey: target.scopeKey, key: target.question.key, fingerprint: target.question.fingerprint });
+const rowId = (target: QuestionTarget) => `${target.frameId}:${target.documentId ?? ''}:${target.documentKey}:${target.scopeKey}:${target.question.key}`;
+const cancelled = () => new DOMException('答题已暂停。', 'AbortError');
+
+/** The top page owns one serial queue shared by manual actions and chapter learning. */
+export function createQuestionAnswerController(deps: Dependencies): ChapterAnswerController {
+  const canPreview = deps.canPreview ?? deps.isEnabled;
+  let state: QuestionAnswerState = { phase: 'idle', running: false, source: null, rows: [], followProgress: true, message: '打开测验、作业或考试后，点击开始答题。' };
+  let run: Run | undefined;
+  let disposed = false;
+  let sourcesRevision = 0;
+  let previewRevision = 0;
+  let previewTask: Promise<void> | undefined;
+  let previewRequested = false;
+  const listeners = new Set<(state: QuestionAnswerState) => void>();
+  const getState = (): QuestionAnswerState => structuredClone(state);
+  const emit = (update: Partial<QuestionAnswerState>) => {
+    if (disposed) return;
+    state = { ...state, ...update };
+    for (const listener of listeners) listener(getState());
+  };
+  const check = (current: Run) => {
+    if (disposed || run !== current || current.abort.signal.aborted || !deps.isEnabled()) throw cancelled();
+  };
+  const updateRow = (id: string, patch: Partial<AnswerRow>) => emit({ rows: state.rows.map(row => row.id === id ? { ...row, ...patch } : row) });
+  function publishScope(scope: AnswerFrameSnapshot[]): AnswerRow[] {
+    const previous = new Map(state.rows.map(row => [row.id, row]));
+    const rows: AnswerRow[] = [];
+    const papers: AnswerPaper[] = scope.map(frame => {
+      const { snapshot } = frame;
+      const rowIds = snapshot.questions.map(question => {
+        const target: QuestionTarget = { frameId: frame.frameId, documentId: frame.documentId, documentKey: snapshot.documentKey, scopeKey: snapshot.scopeKey, question };
+        const id = rowId(target);
+        const old = previous.get(id);
+        const retained = old?.target.question.fingerprint === question.fingerprint ? old : undefined;
+        rows.push({ id, target, phase: retained?.phase ?? (question.supported ? 'pending' : 'unsupported'),
+          message: retained?.message ?? (question.supported ? '等待处理' : question.reason || '当前题型暂不支持。'),
+          text: retained?.text ?? '', source: retained?.source, tags: retained?.tags,
+          currentAnswer: retained?.currentAnswer, readOnly: snapshot.complete || !question.supported });
+        return id;
+      });
+      return { id: `${frame.frameId}:${frame.documentId ?? ''}:${snapshot.documentKey}:${snapshot.scopeKey}`,
+        frameId: frame.frameId, documentId: frame.documentId, documentKey: snapshot.documentKey, scopeKey: snapshot.scopeKey,
+        scene: snapshot.scene, allLoaded: snapshot.allLoaded, complete: snapshot.complete, rowIds };
+    });
+    const samePaper = JSON.stringify([state.papers?.map(paper => [paper.id, paper.rowIds]), state.rows.map(row => row.target.question.fingerprint)])
+      === JSON.stringify([papers.map(paper => [paper.id, paper.rowIds]), rows.map(row => row.target.question.fingerprint)]);
+    emit({ rows, papers, previewStale: false, selectedId: rows.some(row => row.id === state.selectedId) ? state.selectedId : rows[0]?.id,
+      activeId: samePaper && rows.some(row => row.id === state.activeId) ? state.activeId : undefined,
+      followProgress: samePaper ? state.followProgress : true,
+      completion: samePaper ? state.completion : undefined });
+    return rows;
+  }
+  function updateControl(row: AnswerRow, control: AnswerControlSnapshot, preservePhase = false): void {
+    const completed = state.papers?.some(paper => paper.complete && paper.rowIds.includes(row.id));
+    const readOnly = Boolean(completed || !control.ready);
+    const retained = state.rows.find(item => item.id === row.id);
+    const stillFilled = retained?.phase === 'filled' && JSON.stringify(retained.currentAnswer) === JSON.stringify(control.answer);
+    const answerChanged = retained?.currentAnswer !== undefined && JSON.stringify(retained.currentAnswer) !== JSON.stringify(control.answer);
+    if (answerChanged && state.completion === 'saved') emit({ completion: 'unconfirmed' });
+    updateRow(row.id, { currentAnswer: control.answer, readOnly,
+      ...(!preservePhase ? { phase: control.hasContent ? (stillFilled ? 'filled' : control.complete ? 'existing' : 'needs-review')
+        : !row.target.question.supported ? 'unsupported' : 'pending',
+      message: completed ? '平台已完成，本页仅供阅览。' : readOnly ? control.error || '当前题目只可阅览。'
+        : control.hasContent ? control.complete ? '保留页面已有答案。' : '页面已有部分答案，请检查。' : '尚未填写。' } : {}) });
+  }
+  async function readPreviewRows(rows: AnswerRow[], signal: AbortSignal, valid: () => boolean): Promise<void> {
+    for (const row of rows) {
+      if (!valid()) return;
+      try {
+        const result = await deps.runtime.page(row.target, { action: 'read', ...identity(row.target) }, signal);
+        if (!valid()) return;
+        if (!result.ok || !result.control) throw new Error(result.error || '无法读取页面答案。');
+        updateControl(row, result.control);
+      } catch (error) {
+        if (!valid()) return;
+        updateRow(row.id, { readOnly: true, currentAnswer: undefined, message: error instanceof Error ? error.message : '无法读取页面答案，请刷新阅览。' });
+      }
+    }
+  }
+  async function readPreview(revision: number): Promise<void> {
+    // Aborting a transport read cancels the shared page queue. Ignore stale preview replies instead.
+    const signal = new AbortController().signal;
+    const valid = () => !disposed && !run && canPreview() && revision === previewRevision;
+    emit({ previewing: true });
+    try {
+      const frames = await deps.runtime.scan(signal);
+      if (!valid()) return;
+      const rows = publishScope(frames.filter(frame => frame.snapshot.scene !== 'unsupported'));
+      await readPreviewRows(rows, signal, valid);
+      if (valid()) emit({ message: rows.length ? `已读取当前加载的 ${rows.length} 题，可先阅览再开始答题。` : '未识别到已加载题目，请进入测验或作业后刷新阅览。' });
+    } catch (error) {
+      if (valid()) emit({ rows: state.rows.map(row => ({ ...row, readOnly: true })), message: error instanceof Error ? error.message : '题目阅览失败，请刷新。' });
+    } finally { if (valid()) emit({ previewing: false }); }
+  }
+  function preview(): void {
+    if (disposed || run || !canPreview()) return;
+    ++previewRevision;
+    previewRequested = true;
+    emit({ previewing: true });
+    if (previewTask) return;
+    const task = (async () => {
+      while (previewRequested && !disposed && !run && canPreview()) {
+        previewRequested = false;
+        await readPreview(previewRevision);
+      }
+    })();
+    previewTask = task;
+    void task.finally(() => {
+      if (previewTask !== task) return;
+      previewTask = undefined;
+      if (!disposed && !run) emit({ previewing: false });
+    });
+  }
+  async function refreshSources(): Promise<AnswerSourcesStatus | undefined> {
+    if (disposed) return;
+    const revision = ++sourcesRevision;
+    emit({ sources: undefined, sourcesError: undefined });
+    try {
+      const sources = await deps.getSources();
+      if (disposed || revision !== sourcesRevision) return;
+      emit({ sources, source: sources.selection });
+      return sources;
+    } catch {
+      if (!disposed && revision === sourcesRevision) emit({ sourcesError: '无法读取答题来源配置，请点击“重新检查”；若仍失败，请重新加载扩展并刷新页面。' });
+      return;
+    }
+  }
+  const page = async (current: Run, target: QuestionTarget, command: AnswerPageCommand) => {
+    check(current);
+    const result = await deps.runtime.page(target, command, current.abort.signal);
+    check(current);
+    if (!result.ok) throw new Error(result.error || '题目页面操作失败。');
+    return result;
+  };
+  const read = async (current: Run, target: QuestionTarget): Promise<AnswerControlSnapshot> => {
+    const response = await page(current, target, { action: 'read', ...identity(target) });
+    if (!response.control) throw new Error('无法读取本题填写状态。');
+    return response.control;
+  };
+
+  async function answerOne(current: Run, row: AnswerRow): Promise<void> {
+    check(current);
+    const startedAt = Date.now();
+    const source = current.source;
+    if (!source && !current.imported) throw new Error('请先选择答题来源。');
+    const target = row.target;
+    if (!target.question.supported) { updateRow(row.id, { phase: 'unsupported', message: target.question.reason || '当前题目结构暂不支持，未填写。' }); return; }
+    const before = await read(current, target);
+    updateControl(row, before, true);
+    if (!before.ready) { updateRow(row.id, { phase: 'unsupported', message: before.error || '答题控件尚未就绪。' }); return; }
+    current.checkedVersions?.set(row.id, before.version);
+    if (before.hasContent && !current.replace) {
+      updateRow(row.id, { phase: before.complete ? 'existing' : 'needs-review', message: before.complete ? '保留已有答案。' : '本题已有部分答案，保留原内容；请检查或确认覆盖。' });
+      return;
+    }
+    if (!current.imported && source && state.sources) {
+      const plan = planAnswerSource(source, state.sources, Boolean(target.question.textRecognition));
+      if (!plan.first) { updateRow(row.id, { phase: 'needs-review', message: plan.message }); return; }
+    }
+    updateRow(row.id, { phase: 'querying', message: '正在获取答案…', text: '', source: undefined, tags: undefined });
+    let monitoring = false;
+    let watching = true;
+    let changed: Error | undefined;
+    const watch = setInterval(() => {
+      if (!watching || monitoring || current.abort.signal.aborted || run !== current) return;
+      monitoring = true;
+      void read(current, target).then(snapshot => {
+        if (!watching) return;
+        if (!snapshot.ready || snapshot.version !== before.version) { updateControl(row, snapshot, true); throw new Error('题目或已有答案已变化，已暂停，未覆盖你的修改。'); }
+      }).catch(error => {
+        if (watching && !current.abort.signal.aborted && run === current) {
+          changed = error instanceof Error ? error : new Error('题目已变化。');
+          current.abort.abort(); deps.runtime.cancel();
+        }
+      }).finally(() => { monitoring = false; });
+    }, deps.watchInterval ?? 800);
+    try {
+      let result: AnswerResult;
+      if (current.imported) {
+        const imported = current.imported.get(row.id);
+        const answer = imported && normalizeAnswer(target.question, imported.answer);
+        if (!answer) throw new Error('导入答案未通过题型与选项核对，未填写。');
+        result = { status: 'answer', source: current.importSource ?? 'import', text: JSON.stringify(answer), answer };
+      } else {
+        const prepared: PreparedQuestion = target.question.images.length
+          ? (await page(current, target, { action: 'images', ...identity(target) })).prepared!
+          : { question: target.question, images: [], suggestionTitle: '', suggestionOptions: '' };
+        if (!prepared) throw new Error('图片未能完整读取，本题未请求答案。');
+        result = await deps.generate(prepared, source!, current.abort.signal, text => {
+          if (run === current && !current.abort.signal.aborted) updateRow(row.id, { text });
+        }, message => { if (run === current && !current.abort.signal.aborted) updateRow(row.id, { message }); });
+      }
+      check(current);
+      updateRow(row.id, { text: result.text, source: result.source, tags: result.tags });
+      if (result.status !== 'answer' || !result.answer) {
+        updateRow(row.id, { phase: 'needs-review', message: result.message || '没有可可靠填写的答案，请手动处理。' });
+        return;
+      }
+      await deps.waitBeforeFill?.(startedAt, current.abort.signal, message => updateRow(row.id, { message }));
+      check(current);
+      const live = await read(current, target);
+      updateControl(row, live, true);
+      if (!live.ready || live.version !== before.version) throw new Error('生成期间题目或已有答案发生变化，未覆盖。');
+      // Stop polling before our own mutation; the page adapter performs the final compare-and-write.
+      watching = false;
+      clearInterval(watch);
+      const written = await page(current, target, {
+        action: 'write', ...identity(target), expectedVersion: before.version, answer: result.answer, replace: Boolean(current.replace),
+      });
+      if (!written.control?.complete) throw new Error('填写后的状态未通过核对，请检查本题。');
+      current.checkedVersions?.set(row.id, written.control.version);
+      updateRow(row.id, { phase: 'filled', currentAnswer: written.control.answer, readOnly: false, message: result.message ? `已填写并核对。${result.message}` : '已填写并核对。' });
+    } catch (error) {
+      throw changed ?? error;
+    } finally { watching = false; clearInterval(watch); }
+  }
+
+  async function execute(current: Run): Promise<StudyTaskOutcome | undefined> {
+    if (run) throw new Error('当前已有答题任务，请先暂停。');
+    if (state.sourceSaving) throw new Error('正在保存答题来源，请稍后继续。');
+    if (!deps.isEnabled()) throw new Error('请先开启批量答题功能。');
+    ++previewRevision;
+    previewRequested = false;
+    run = current;
+    current.checkedVersions = new Map();
+    emit({ running: true, previewing: false, followProgress: true, completion: undefined, phase: 'scanning', message: '正在读取当前页面各题目框架…' });
+    let activeId: string | undefined;
+    try {
+      // Let earlier transport reads (including their timeout cleanup) settle before any answer work.
+      await previewTask;
+      check(current);
+      const frames = await deps.runtime.scan(current.abort.signal);
+      check(current);
+      const scope = frames.filter(frame => frame.snapshot.scene !== 'unsupported'
+        && (!current.chapter || (frame.frameId === current.chapter.frameId && frame.documentId === current.chapter.documentId && frame.snapshot.scene === 'chapter-test')));
+      const previous = new Map(state.rows.map(row => [row.id, row]));
+      const allRows = publishScope(scope);
+      if (current.imported) {
+        for (const [id, entry] of current.imported) {
+          const live = allRows.find(row => row.id === id);
+          if (!live || live.readOnly || live.target.question.fingerprint !== entry.target.question.fingerprint) {
+            throw new Error('导入答案对应的题目已变化、完成或不在当前页面，请重新读取并匹配。');
+          }
+        }
+      }
+      if (scope.length && scope.every(frame => frame.snapshot.complete)) {
+        await readPreviewRows(allRows, current.abort.signal, () => run === current && !current.abort.signal.aborted);
+        check(current);
+        emit({ phase: 'complete', message: '平台显示当前题目已完成，无需重新填写。' });
+        return { status: 'acted', message: '章节测验已完成。' };
+      }
+      const rows = allRows.filter(row => !scope.find(frame => frame.frameId === row.target.frameId && frame.documentId === row.target.documentId)?.snapshot.complete);
+      if (!rows.length) throw new Error('没有识别到可用题目子页面。请等待内容加载；未知页面模板暂不支持。');
+      if (current.onlyId && !rows.some(row => row.id === current.onlyId && row.target.question.fingerprint === previous.get(row.id)?.target.question.fingerprint)) throw new Error('目标题目已变化，请重新开始读取。');
+      if (!current.imported) {
+        const sources = await refreshSources();
+        check(current);
+        if (!sources) throw new Error(state.sourcesError || '答题来源配置已变化，请重新开始。');
+        const regularPlan = planAnswerSource(state.source, sources);
+        const plan = regularPlan.first ? regularPlan : rows.some(row => row.target.question.supported && row.target.question.textRecognition)
+          ? planAnswerSource(state.source, sources, true) : regularPlan;
+        if (!plan.first || !sources.selection) {
+          await readPreviewRows(allRows, current.abort.signal, () => run === current && !current.abort.signal.aborted);
+          check(current);
+          throw new Error(plan.message);
+        }
+        current.source = sources.selection;
+      }
+      emit({ phase: 'running', message: current.imported ? '正在填写已核对的导入答案；已有内容默认保留。' : '正在逐题获取并填写答案；可随时暂停。' });
+      for (const row of rows) {
+        if ((current.onlyId && row.id !== current.onlyId) || (current.imported && !current.imported.has(row.id))) {
+          const old = previous.get(row.id);
+          if (old?.target.question.fingerprint === row.target.question.fingerprint) updateRow(row.id, old);
+          continue;
+        }
+        check(current); activeId = row.id;
+        emit({ activeId: row.id, ...(state.followProgress ? { selectedId: row.id } : {}) });
+        await answerOne(current, row);
+        activeId = undefined;
+      }
+      check(current);
+      if (!current.chapter) { emit({ phase: 'complete', message: '本轮填写结束，请检查答案后自行保存或提交。' }); return; }
+      if (current.policy === 'stay') {
+        emit({ phase: 'complete', message: '章节测验填写结束，已停留等待检查。' });
+        return { status: 'attention', message: '章节测验已填写，请检查后手动保存或提交。' };
+      }
+      const frame = scope[0];
+      if (scope.length !== 1 || !frame) throw new Error('章节测验范围不唯一，无法自动保存或提交。');
+      if (current.policy === 'submit' && (!frame.snapshot.allLoaded || !frame.snapshot.canSubmit
+          || state.rows.some(row => !['filled', 'existing'].includes(row.phase)))) throw new Error('仍有未处理题目、分页或无法核对的内容，已停留，未自动提交。');
+      if (current.policy === 'save' && !frame.snapshot.canSave) throw new Error('当前页面没有已支持的保存入口，已停留避免丢失答案。');
+      const expected: Array<{ key: string; fingerprint: string; version: string }> = [];
+      for (const row of state.rows) {
+        const control = await read(current, row.target);
+        updateControl(row, control, true);
+        if (!control.ready) throw new Error('题目控件未就绪，已停留，未保存或提交。');
+        const checkedVersion = current.checkedVersions.get(row.id);
+        if (checkedVersion !== undefined && control.version !== checkedVersion) throw new Error('填写后答案发生变化，已停留，请检查后自行保存或提交。');
+        if (current.policy === 'submit' && !control.complete) throw new Error('仍有题目未完整填写，未自动提交。');
+        expected.push({ key: row.target.question.key, fingerprint: row.target.question.fingerprint, version: control.version });
+      }
+      emit({ completion: current.policy === 'submit' ? 'submitting' : 'saving', message: current.policy === 'submit' ? '正在提交并等待平台确认…' : '正在保存草稿并等待平台确认…' });
+      const result = await page(current, rows[0].target, {
+        action: 'finish', documentKey: frame.snapshot.documentKey, scopeKey: frame.snapshot.scopeKey,
+        policy: current.policy ?? 'save', expected,
+      });
+      if (result.outcome !== (current.policy === 'submit' ? 'submitted' : 'saved')) throw new Error('平台尚未确认操作成功，已停留检查。');
+      const saved = result.outcome === 'saved';
+      const message = saved ? '章节测验已保存、待提交，继续后续学习。' : '平台已确认测验提交，继续后续学习。';
+      emit({ phase: 'complete', completion: saved ? 'saved' : 'submitted', message,
+        ...(!saved ? { papers: state.papers?.map(paper => ({ ...paper, complete: true })),
+          rows: state.rows.map(row => ({ ...row, readOnly: true })) } : {}) });
+      return { status: 'acted', message, chapterIncomplete: saved };
+    } catch (error) {
+      const message = current.invalidated ? '题目页面已更换，请重新读取题目。' : error instanceof Error ? error.message : '答题失败，请检查页面。';
+      if (state.completion === 'saving' || state.completion === 'submitting') emit({ completion: 'unconfirmed' });
+      if (activeId) updateRow(activeId, { phase: current.abort.signal.aborted && message === '答题已暂停。' ? 'pending' : 'error', message });
+      emit({ phase: current.abort.signal.aborted ? 'paused' : 'error', message });
+      if (current.chapter) return { status: 'attention', message };
+    } finally {
+      if (run === current) { run = undefined; current.abort.abort(); deps.runtime.cancel(); emit({ running: false }); }
+    }
+  }
+  const launch = (options: Partial<Run> = {}) => {
+    if (run || state.sourceSaving) return;
+    void execute({ ...options, abort: new AbortController() }).catch(error => emit({ phase: 'error', running: false, message: error instanceof Error ? error.message : '无法开始答题。' }));
+  };
+  const stop = () => {
+    ++previewRevision;
+    previewRequested = false;
+    if (run) run.abort.abort();
+    deps.runtime.cancel();
+    emit({ previewing: false, phase: 'paused', message: '已暂停；已填写内容保留。' });
+  };
+  const unsubscribeInvalidation = deps.runtime.subscribeInvalidation?.(() => {
+    if (disposed) return;
+    ++previewRevision;
+    previewRequested = false;
+    if (run) { run.invalidated = true; stop(); }
+    emit({ rows: state.rows.map(row => ({ ...row, readOnly: true })), previewing: false, previewStale: true,
+      message: '题目页面已更换，请重新读取题目。' });
+  });
+  void refreshSources();
+  return {
+    getState,
+    subscribe(listener) { listeners.add(listener); listener(getState()); return () => listeners.delete(listener); },
+    start() { launch(); }, stop,
+    preview,
+    async applyImportedAnswers(entries, source = 'import') {
+      if (disposed || run || state.sourceSaving || state.previewing || state.previewStale) throw new Error('请先结束当前任务并重新读取题目，再填写导入答案。');
+      if (!entries.length || entries.length > 300) throw new Error('请先解析并核对 1 至 300 条可匹配答案。');
+      const imported = new Map<string, ImportedAnswer>();
+      for (const entry of structuredClone(entries)) {
+        const question = entry.target.question;
+        const answer = normalizeAnswer(question, entry.answer);
+        const id = rowId(entry.target);
+        if (!answer || question.images.length || question.textRecognition || imported.has(id)) throw new Error('导入答案重复或不是完整纯文本题，未填写。');
+        imported.set(id, { target: entry.target, answer });
+      }
+      await execute({ abort: new AbortController(), imported, importSource: source });
+      if (state.phase !== 'complete') throw new Error(state.message);
+    },
+    selectQuestion(id) { if (!disposed && state.rows.some(row => row.id === id)) emit({ selectedId: id, followProgress: false }); },
+    followProgress() {
+      if (disposed) return;
+      emit({ followProgress: true, ...(!state.previewStale && state.rows.some(row => row.id === state.activeId) ? { selectedId: state.activeId } : {}) });
+    },
+    retry(id, replace = false) { if (state.rows.some(row => row.id === id)) launch({ onlyId: id, replace }); },
+    setSource(source) {
+      if (run || disposed || state.sourceSaving || !['prefer-bank', 'bank', 'ai'].includes(source)) return;
+      const previous = state.source;
+      ++sourcesRevision;
+      emit({ source, sources: undefined, sourcesError: undefined, sourceSaving: true });
+      void deps.saveSource(source).then(() => refreshSources()).catch(() => {
+        emit({ source: previous, sources: undefined, sourcesError: '答题来源保存失败，请重新检查后再选择。' });
+      }).finally(() => emit({ sourceSaving: false }));
+    },
+    refreshSources() { if (!run && !disposed && !state.sourceSaving) void refreshSources(); },
+    settingsChanged() {
+      if (run) stop();
+      else { ++previewRevision; previewRequested = false; emit({ previewing: false }); }
+      if (!disposed && !state.sourceSaving) void refreshSources();
+    },
+    async runChapter(target, signal, policy) {
+      if (run) return { status: 'attention', message: '答题面板已有任务，请结束后继续章节学习。' };
+      const current: Run = { abort: new AbortController(), chapter: target, policy };
+      const abort = () => { current.abort.abort(); deps.runtime.cancel(); };
+      if (signal.aborted) abort();
+      signal.addEventListener('abort', abort, { once: true });
+      try { return await execute(current) ?? { status: 'attention', message: '章节测验没有返回完成状态。' }; }
+      catch (error) { return { status: 'attention', message: error instanceof Error ? error.message : '章节测验处理失败。' }; }
+      finally { signal.removeEventListener('abort', abort); }
+    },
+    dispose() { unsubscribeInvalidation?.(); stop(); disposed = true; listeners.clear(); },
+  };
+}

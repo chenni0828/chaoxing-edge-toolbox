@@ -3,10 +3,11 @@ import { mountAppearanceSettings } from '../features/floating-toolbox/appearance
 import { mountToolboxSettings } from '../features/toolbox-settings/ui';
 import { mountUpdateCheck } from '../features/update-check/ui';
 import { icon } from '../features/floating-toolbox/icons';
+import { mountQuestionBankSettings } from '../features/question-bank/ui';
+import { mountPacingSettings } from '../features/answer-pacing/ui';
+import type { SettingsSection } from '../platform/settings-navigation';
 
-type SettingsSection = 'api' | 'features' | 'floating';
-
-const sections = ['api', 'features', 'floating'] as const;
+const sections = ['api', 'question-bank', 'features', 'floating'] as const;
 const cleanups: Array<() => void> = [];
 const brand = document.querySelector('.brand-mark');
 if (brand) brand.innerHTML = icon('logo', 36);
@@ -15,13 +16,23 @@ if (version) version.textContent = `v${chrome.runtime.getManifest().version}`;
 const updateRoot = document.getElementById('settings-update');
 if (updateRoot) cleanups.push(mountUpdateCheck(updateRoot));
 
+const apiRoot = document.getElementById('settings-api');
+const bankRoot = document.getElementById('settings-question-bank');
+if (apiRoot) cleanups.push(mountApiSettings(apiRoot));
+if (bankRoot) cleanups.push(mountQuestionBankSettings(bankRoot));
+
 for (const [id, mount] of [
-  ['api', mountApiSettings],
   ['features', mountToolboxSettings],
   ['floating', mountAppearanceSettings],
 ] as const) {
   const root = document.getElementById(`settings-${id}`);
   if (root) cleanups.push(mount(root));
+}
+const featureSettings = document.getElementById('settings-features');
+if (featureSettings) {
+  const pacingRoot = document.createElement('div');
+  featureSettings.append(pacingRoot);
+  cleanups.push(mountPacingSettings(pacingRoot));
 }
 
 function navigate(section: SettingsSection): void {
@@ -32,7 +43,8 @@ function navigate(section: SettingsSection): void {
     if (id === section) link?.setAttribute('aria-current', 'page');
     else link?.removeAttribute('aria-current');
   }
-  document.title = `${section === 'api' ? '学习通 API 设置' : section === 'features' ? '功能设置' : '悬浮框设置'} · 学习工具箱`;
+  const titles: Record<SettingsSection, string> = { api: '学习通 API 设置', 'question-bank': '言溪题库设置', features: '功能设置', floating: '悬浮框设置' };
+  document.title = `${titles[section]} · 学习工具箱`;
 }
 
 function followHash(): void {

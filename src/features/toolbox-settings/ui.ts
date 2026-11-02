@@ -21,7 +21,8 @@ export function mountToolboxSettings(root: HTMLElement): () => void {
   const locations: Record<string, string> = {
     'allow-paste': '在网页迷你工具栏或悬浮框中快速开关，直接粘贴到页面输入框或代码编辑器。',
     'question-extract': '在网页悬浮框中提取、编辑预览，逐题复制或复制全部题目。',
-    'ai-answer': '在思维阶梯简答题页面，从悬浮框手动开始自动填入；发送答案仍由你操作。',
+    'ai-answer': '共用 API 设置，为“答题”面板提供 AI；思维阶梯简答题仍由你手动发送。',
+    'question-answer': '在“答题”面板选择言溪或 AI，开始后逐题填写；章节测验可在启动章节学习后联动。',
     'chapter-study': '启用后进入章节详情页自动学习；在“章节学习”工作区调整起点、倍速和静音，随时暂停或继续。',
     'zjooc-study': '启用后进入课程学习详情页自动静音播放视频、选择平台最高倍速，并点击课件“完成学习”，直至课程最后一节。',
   };

@@ -6,11 +6,11 @@ export function mountApiSettings(root: HTMLElement): () => void {
   root.innerHTML = `<div class="card">
     <div class="section-heading"><h2>API 设置</h2><p>连接兼容 Chat Completions 协议的模型服务。</p></div>
     <form class="settings-form" autocomplete="off">
-      <p class="inline-note">开始 AI 作答后，仅当前题目会发往你配置的服务；历史题目和作答不会作为上下文发送，生成后的发送操作由你完成。</p>
+      <p class="inline-note">AI 作答按题目独立请求；只发送正在处理的题目，历史题目和作答不会作为上下文。测验、作业与考试的保存、提交行为由答题完成设置控制。</p>
       <div class="field"><label for="api-endpoint">API 地址</label><input id="api-endpoint" name="endpoint" type="url" inputmode="url" placeholder="https://服务商域名/v1" spellcheck="false" autocapitalize="none" aria-describedby="endpoint-help endpoint-preview endpoint-error" maxlength="2048" required disabled /><p id="endpoint-help" class="field-help">支持基础或完整地址，自动补全 <code>/chat/completions</code>。</p><p id="endpoint-preview" class="field-help endpoint-preview" hidden></p><p id="endpoint-error" class="field-error" aria-live="polite" hidden></p></div>
       <div class="field"><label for="api-key">API Key</label><div class="input-action"><input id="api-key" name="api-key" type="password" spellcheck="false" autocapitalize="none" autocomplete="off" aria-describedby="key-help" maxlength="4096" required disabled /><button class="secondary reveal-key" type="button" aria-controls="api-key" aria-pressed="false" disabled>显示</button></div><p id="key-help" class="field-help">密钥仅保存在本机，学习通网页无法读取。</p></div>
       <div class="field"><label for="api-model">模型名称</label><input id="api-model" name="model" type="text" placeholder="填写服务商的准确模型名称" spellcheck="false" autocapitalize="none" aria-describedby="model-help" maxlength="200" required disabled /><p id="model-help" class="field-help">填写服务商提供的模型 ID。</p></div>
-      <details class="advanced-settings"><summary>高级选项与数据说明</summary><label class="checkbox-row" for="api-stream"><input id="api-stream" type="checkbox" checked disabled /><span>使用流式响应</span></label><p class="field-help">默认开启；完整生成并校验后，一次填入回答。</p><p class="field-help">地址末尾误带的标点会自动移除，完整端点不会重复补全。保存时仅申请所填域名权限。</p></details>
+      <details class="advanced-settings"><summary>高级选项与数据说明</summary><label class="checkbox-row" for="api-stream"><input id="api-stream" type="checkbox" checked disabled /><span>使用流式响应</span></label><p class="field-help">默认开启；完整生成并校验后，一次填入回答。</p><label class="checkbox-row" for="api-images"><input id="api-images" type="checkbox" disabled /><span>此模型支持图片输入</span></label><p class="field-help">仅在服务商确认模型支持 image_url 图片输入时开启。图片题会随题目发送；未开启时不使用 AI 猜测图片内容。</p><p class="field-help">地址末尾误带的标点会自动移除，完整端点不会重复补全。保存时仅申请所填域名权限。</p></details>
       <div class="api-actions">
         <p id="api-saved-status" class="saved-status" aria-live="polite">正在读取 API 设置…</p>
         <div class="button-row"><button class="primary save-api" type="submit" disabled>保存配置</button><button class="secondary test-api" type="button" aria-describedby="api-saved-status api-test-help" disabled>测试连接</button><button class="text-button clear-api" type="button" disabled>清除配置</button></div>
@@ -26,6 +26,7 @@ export function mountApiSettings(root: HTMLElement): () => void {
   const key = root.querySelector<HTMLInputElement>('#api-key')!;
   const model = root.querySelector<HTMLInputElement>('#api-model')!;
   const stream = root.querySelector<HTMLInputElement>('#api-stream')!;
+  const images = root.querySelector<HTMLInputElement>('#api-images')!;
   const save = root.querySelector<HTMLButtonElement>('.save-api')!;
   const test = root.querySelector<HTMLButtonElement>('.test-api')!;
   const clear = root.querySelector<HTMLButtonElement>('.clear-api')!;
@@ -66,12 +67,12 @@ export function mountApiSettings(root: HTMLElement): () => void {
   }
 
   function values(): ApiConfig {
-    return normalizeApiConfig({ version: 1, endpoint: endpoint.value, apiKey: key.value, model: model.value, stream: stream.checked });
+    return normalizeApiConfig({ version: 1, endpoint: endpoint.value, apiKey: key.value, model: model.value, stream: stream.checked, supportsImages: images.checked });
   }
 
   function dirty(): boolean {
     const current = values();
-    return current.endpoint !== saved.endpoint || current.apiKey !== saved.apiKey || current.model !== saved.model || current.stream !== saved.stream;
+    return current.endpoint !== saved.endpoint || current.apiKey !== saved.apiKey || current.model !== saved.model || current.stream !== saved.stream || current.supportsImages !== saved.supportsImages;
   }
 
   function populated(): boolean { return Boolean(saved.endpoint && saved.apiKey && saved.model); }
@@ -93,7 +94,7 @@ export function mountApiSettings(root: HTMLElement): () => void {
   function render(): void {
     if (disposed) return;
     inspectEndpoint();
-    for (const input of [endpoint, key, model, stream]) input.disabled = !loaded || Boolean(busy);
+    for (const input of [endpoint, key, model, stream, images]) input.disabled = !loaded || Boolean(busy);
     save.disabled = !loaded || Boolean(busy);
     test.disabled = !loaded || Boolean(busy) || !populated() || !authorized || dirty();
     clear.disabled = !loaded || Boolean(busy) || !populated();
@@ -115,6 +116,7 @@ export function mountApiSettings(root: HTMLElement): () => void {
     key.value = config.apiKey;
     model.value = config.model;
     stream.checked = config.stream;
+    images.checked = config.supportsImages === true;
     key.type = 'password';
     reveal.textContent = '显示';
     reveal.setAttribute('aria-pressed', 'false');
@@ -159,7 +161,9 @@ export function mountApiSettings(root: HTMLElement): () => void {
     void (async () => {
       try {
         if (!await grant) { tell('未授予接口域名访问权限，配置未保存；原配置仍然保留。', true); return; }
+        if (disposed) return;
         await saveApiConfig(config);
+        if (disposed) return;
         saved = config;
         authorized = true;
         apply(config);

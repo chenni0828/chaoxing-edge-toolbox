@@ -18,6 +18,9 @@ import { getPlatform, type PlatformId } from '../shared/sites';
 import { createZjoocStudyView } from './zjooc-study/ui';
 import { zjoocStudyStyles } from './zjooc-study/styles';
 import type { ZjoocStudyController } from './zjooc-study/types';
+import type { QuestionAnswerController } from './question-answer/types';
+import { questionAnswerStyles } from './question-answer/styles';
+import { answerExchangeStyles } from './answer-exchange/styles';
 
 export interface WorkspaceView {
   element: HTMLElement;
@@ -34,6 +37,7 @@ export interface WorkspaceContext {
   openSettings(section?: SettingsSection): Promise<void>;
   getApiStatus(): Promise<ApiStatus>;
   ai?: AiAnswerController;
+  questionAnswer?: QuestionAnswerController;
   study?: StudyController;
   zjoocStudy?: ZjoocStudyController;
 }
@@ -70,4 +74,4 @@ export function getDefaultWorkspace(url: string): ToolboxView {
   return workspaces.find((workspace) => workspace.defaultOnPage?.(url))?.id ?? workspaces[0]?.id ?? 'page-tools';
 }
 
-export const workspaceStyles = [questionExtractStyles, aiAnswerStyles, chapterStudyStyles, zjoocStudyStyles].join('\n');
+export const workspaceStyles = [questionExtractStyles, aiAnswerStyles, questionAnswerStyles, answerExchangeStyles, chapterStudyStyles, zjoocStudyStyles].join('\n');

@@ -1,7 +1,7 @@
 import { isThinkLadderUrl } from '../features/ai-answer/adapters/think-ladder';
 import { isPlatformUrl } from '../shared/sites';
 
-export type PageContext = 'homework' | 'think-ladder' | 'generic';
+export type PageContext = 'homework' | 'exam' | 'think-ladder' | 'generic';
 
 const PAGE_MARKERS = '#fanyaMarking, #submitForm, #realApp, #chatScroll, .questionLi, input[name="workAnswerId"], iframe';
 const PAGE_IDS = new Set(['fanyaMarking', 'submitForm', 'realApp', 'chatScroll']);
@@ -42,6 +42,12 @@ export function isHomeworkUrl(value: string): boolean {
   } catch { return false; }
 }
 
+export function isExamUrl(value: string): boolean {
+  if (!isPlatformUrl(value, 'chaoxing')) return false;
+  try { return /^\/(?:mooc-ans\/)?(?:mooc2\/)?exam(?:\/|$)/i.test(new URL(value).pathname); }
+  catch { return false; }
+}
+
 /** Known work routes and work-specific markup, including accessible embedded pages. */
 export function readPageContext(doc: Document): PageContext {
   const visited = new Set<Document>();
@@ -50,9 +56,11 @@ export function readPageContext(doc: Document): PageContext {
     visited.add(current);
     const href = current.location?.href ?? current.URL;
     if (isThinkLadderUrl(href)) return 'think-ladder';
+    if (isExamUrl(href)) return 'exam';
     if (isHomeworkUrl(href)) return 'homework';
     if (current.querySelector('#fanyaMarking .questionLi, #submitForm input[name="workAnswerId"]')) return 'homework';
     const workForm = current.querySelector<HTMLFormElement>('form#submitForm');
+    if (workForm && isExamUrl(workForm.action)) return 'exam';
     if (workForm && isHomeworkUrl(workForm.action)) return 'homework';
     for (const frame of current.querySelectorAll<HTMLIFrameElement>('iframe')) {
       if (isEditorContent(frame)) continue;
@@ -61,6 +69,7 @@ export function readPageContext(doc: Document): PageContext {
         try {
           const url = new URL(src, current.baseURI).href;
           if (isThinkLadderUrl(url)) return 'think-ladder';
+          if (isExamUrl(url)) return 'exam';
           if (isHomeworkUrl(url)) return 'homework';
         } catch { /* An unloaded or malformed frame is not a page classification. */ }
       }
@@ -77,7 +86,7 @@ export function readPageContext(doc: Document): PageContext {
 }
 
 export function pageToolsTitle(context: PageContext): string {
-  return context === 'homework' ? '作业' : context === 'think-ladder' ? '思维阶梯' : '页面工具';
+  return context === 'homework' ? '作业' : context === 'exam' ? '考试' : context === 'think-ladder' ? '思维阶梯' : '页面工具';
 }
 
 /** Reclassify late page/frame content; callers decide whether navigation may change. */

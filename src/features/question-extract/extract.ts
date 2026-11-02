@@ -1,4 +1,5 @@
 import { extractThinkLadderQuestions, isThinkLadderUrl } from '../ai-answer/adapters/think-ladder';
+import { fontStatus, readQuestionText } from '../question-font';
 
 /** Read-only adapters for known Chaoxing question markup. Never inspect answer values. */
 export type ExtractedQuestion = {
@@ -7,11 +8,13 @@ export type ExtractedQuestion = {
   type: string;
   markdown: string;
   imageUrls: string[];
+  warning?: string;
 };
 
 const CONTAINERS = '.questionLi, .TiMu, .question-item, .questionItem';
 const STEMS = '.mark_name, .Zy_TItle, .question-title, .questionTitle';
 const OPTIONS = '.mark_letter, .Zy_ulTop, .question-options, .questionOptions';
+const SUPPLEMENTS = '.reading_answer, .filling_answer, .firstUlList, .secondUlList';
 const EXCLUDED = [
   'script', 'style', 'noscript', 'template', 'iframe', 'object', 'embed',
   'textarea', 'select', 'button', 'canvas', 'svg', 'audio', 'video',
@@ -34,6 +37,7 @@ const NUMBER_PREFIX = /^\s*(?:第\s*)?([0-9]+|[一二三四五六七八九十百
 type Context = {
   baseUrl: string;
   imageUrls: Set<string>;
+  imageNumbers: Map<string | Element, number>;
   omitted: Set<Element>;
   codeFragments: string[];
 };
@@ -109,7 +113,7 @@ function children(element: Element, context: Context): string {
 }
 
 function plainCode(node: Node, context: Context): string {
-  if (node.nodeType === 3) return node.textContent ?? '';
+  if (node.nodeType === 3) return readQuestionText(node);
   if (node.nodeType !== 1) return '';
   const element = node as Element;
   if (isExcluded(element) || context.omitted.has(element) || element.tagName === 'INPUT') return '';
@@ -163,7 +167,7 @@ function renderTable(element: Element, context: Context): string {
 }
 
 function render(node: Node, context: Context): string {
-  if (node.nodeType === 3) return (node.textContent ?? '').replace(/[\s\u00a0]+/g, ' ');
+  if (node.nodeType === 3) return readQuestionText(node).replace(/[\s\u00a0]+/g, ' ');
   if (node.nodeType !== 1) return '';
   const element = node as Element;
   if (isExcluded(element) || context.omitted.has(element)) return '';
@@ -176,7 +180,12 @@ function render(node: Node, context: Context): string {
   if (tag === 'HR') return '\n\n---\n\n';
   if (tag === 'IMG') {
     const url = imageUrl(element, context);
-    if (!url) return '';
+    const key = url ?? element;
+    if (!context.imageNumbers.has(key)) context.imageNumbers.set(key, context.imageNumbers.size + 1);
+    if (!url) {
+      const embedded = ['data-original', 'data-src', 'data-lazy-src', 'data-url', 'src'].some(name => /^data:image\//i.test(element.getAttribute(name) ?? ''));
+      return `[图片${context.imageNumbers.get(key)}：${embedded ? '内嵌图片' : '地址不可用'}，请在原页面查看]`;
+    }
     context.imageUrls.add(url);
     const alt = element.getAttribute('alt')?.trim() || element.getAttribute('title')?.trim() || '题目图片';
     return `![${escapeLabel(alt)}](${destination(url)})`;
@@ -196,6 +205,10 @@ function render(node: Node, context: Context): string {
   if (tag === 'UL' || tag === 'OL') return renderList(element, context);
   if (tag === 'TABLE') return renderTable(element, context);
   const text = children(element, context);
+  if (element.matches('.saveSingleSelect[data]')) {
+    const label = element.getAttribute('data') ?? '';
+    return `\n\n${/^[A-Z]$/.test(label) ? `${label}. ` : ''}${text}\n\n`;
+  }
   if (tag === 'A') {
     const url = safeUrl(element.getAttribute('href'), context.baseUrl);
     return url && text.trim() && !element.querySelector('img')
@@ -233,14 +246,14 @@ export function extractQuestions(root: Document | Element, baseUrl?: string): Ex
       || hasExcludedAncestor(container, root) || isExcluded(container)) continue;
     if (!container.matches(STEMS) && stem.closest(CONTAINERS) !== container) continue;
     seen.add(stem);
-    const metadata = Array.from(stem.querySelectorAll('.colorShallow, .question-type, .questionType'))
-      .find((element) => /^\s*[(（]?[^(（)）]*题[^()（）]*[)）]?\s*$/u.test(element.textContent ?? ''));
+    const metadata = Array.from(stem.querySelectorAll('.colorShallow, .question-type, .questionType, .newZy_TItle'))
+      .find((element) => /^\s*[(（【]?[^(（)）【】]*题[^()（）【】]*[)）】]?\s*$/u.test(element.textContent ?? ''));
     const typeText = metadata?.textContent ?? stem.textContent ?? '';
     const type = (container.getAttribute('typename')
       ?? container.getAttribute('data-question-type')
-      ?? /[（(]\s*([^()（）]*?题)[^()（）]*[)）]/u.exec(typeText)?.[1]
+      ?? /[（(【]\s*([^()（）【】]*?题)[^()（）【】]*[)）】]/u.exec(typeText)?.[1]
       ?? metadata?.textContent
-      ?? '').replace(/^[（(]\s*|\s*[)）]$/g, '').trim();
+      ?? '').replace(/^[（(【]\s*|\s*[)）】]$/g, '').trim();
     const numberElement = stem.firstElementChild;
     const markedNumber = numberElement
       && (numberElement.matches('i.fl, .question-number, .questionNumber, .question-num'))
@@ -249,31 +262,45 @@ export function extractQuestions(root: Document | Element, baseUrl?: string): Ex
     const context: Context = {
       baseUrl: baseUrl ?? root.baseURI ?? 'https://mooc1.chaoxing.com/',
       imageUrls: new Set(),
+      imageNumbers: new Map(),
       omitted: new Set([...(metadata ? [metadata] : []), ...(markedNumber && numberElement ? [numberElement] : [])]),
       codeFragments: [],
     };
     const stemText = normalize(children(stem, context));
-    const prefix = NUMBER_PREFIX.exec(stemText);
+    const prefix = markedNumber ? null : NUMBER_PREFIX.exec(stemText);
     const number = markedNumber?.[1] ?? prefix?.[1] ?? String(questions.length + 1);
-    let markdown = normalize(stemText.replace(NUMBER_PREFIX, '').replace(/^\s*[（(][^()（）]*?题[^()（）]*[)）]\s*/u, ''));
-    const optionBlocks = Array.from(container.querySelectorAll(OPTIONS))
+    const unnumberedStem = prefix ? stemText.slice(prefix[0].length) : stemText;
+    let markdown = normalize(unnumberedStem.replace(/^\s*[（(【][^()（）【】]*?题[^()（）【】]*[)）】]\s*/u, ''));
+    const candidates = Array.from(container.querySelectorAll(`${OPTIONS},${SUPPLEMENTS}`));
+    // Observed chapter controls can omit Zy_ulTop, while homework uses answer_p rows.
+    if (container.matches('.TiMu')) candidates.push(...Array.from(container.querySelectorAll('ul')).filter(list => list.querySelector('li .after')));
+    if (container.matches('.questionLi')) candidates.push(...Array.from(container.querySelectorAll('.answerBg .answer_p')).map(option => {
+      const row = option.closest('li');
+      return row && row !== container && container.contains(row) ? row : option;
+    }));
+    const optionBlocks = [...new Set(candidates)]
       .filter((option) => !stem.contains(option) && !hasExcludedAncestor(option, container))
       .filter((option) => option.closest(CONTAINERS) === container)
       .filter((option, _, options) => !options.some((other) => other !== option && other.contains(option)));
+    let childNumber = 0;
     for (const option of optionBlocks) {
       const text = normalize(children(option, context));
-      if (text) markdown += '\n\n' + text;
+      if (text) markdown += '\n\n' + (option.matches('.reading_answer,.filling_answer') ? `### 子题 ${++childNumber}\n\n` : '') + text;
     }
     markdown = restoreCode(normalize(markdown), context);
     if (!markdown) continue;
     const questionId = container.getAttribute('data-question-id') || container.id
-      || container.getAttribute('data');
+      || container.closest('.singleQuesId')?.getAttribute('data')
+      || container.querySelector<HTMLInputElement>('input[id^="answertype"]')?.id
+      || (!container.matches('.TiMu') ? container.getAttribute('data') : undefined);
+    const font = fontStatus(container);
     questions.push({
       id: questionId || `question-${questions.length + 1}`,
       number,
       type,
       markdown,
       imageUrls: [...context.imageUrls],
+      ...(!font.ready ? { warning: font.error || '题目字体尚未还原，请稍后重新提取。' } : {}),
     });
   }
   return questions;
@@ -283,6 +310,6 @@ export function extractQuestions(root: Document | Element, baseUrl?: string): Ex
 export function formatQuestions(questions: ExtractedQuestion[]): string {
   return questions.map((question) => {
     const type = question.type ? `（${question.type}）` : '';
-    return `## 第 ${question.number} 题${type}\n\n${question.markdown}`;
+    return `## 第 ${question.number} 题${type}\n\n${question.warning ? `> ${question.warning}\n\n` : ''}${question.markdown}`;
   }).join('\n\n---\n\n');
 }

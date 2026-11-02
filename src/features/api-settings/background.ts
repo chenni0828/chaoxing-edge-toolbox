@@ -1,6 +1,18 @@
 import { broadcastPublic, privateStorageReady, type BackgroundRoutes } from '../../core/background-context';
 import { requestChatCompletion } from './model-client';
 import { API_SETTINGS_KEY, apiOrigin, emptyApiConfig, normalizeApiConfig, validateApiConfig, type ApiConfig, type ApiStatus } from './types';
+import { QUESTION_BANK_ORIGIN, QUESTION_BANK_SETTINGS_KEY, normalizeQuestionBankConfig } from '../question-bank/types';
+import { waitForProvider } from '../answer-pacing/background';
+import { PACING_SETTINGS_KEY } from '../answer-pacing/types';
+
+async function releaseApiOrigin(endpoint: string): Promise<void> {
+  const origin = apiOrigin(endpoint);
+  if (origin === QUESTION_BANK_ORIGIN) {
+    const record = await chrome.storage.local.get(QUESTION_BANK_SETTINGS_KEY);
+    if (normalizeQuestionBankConfig(record[QUESTION_BANK_SETTINGS_KEY]).token) return;
+  }
+  await chrome.permissions.remove({ origins: [origin] });
+}
 
 export async function readStoredApiConfig(): Promise<ApiConfig> {
   await privateStorageReady;
@@ -31,10 +43,23 @@ export async function readApiStatus(): Promise<ApiStatus> {
 }
 
 let testing = false;
+let activeTest: AbortController | undefined;
+let configWrites = 0;
+let mutationTail = Promise.resolve();
+
+/** Serialize API saves and joint restores, and cancel a test before it can use stale credentials. */
+export function withApiConfigMutation<T>(operation: () => Promise<T>): Promise<T> {
+  configWrites += 1;
+  activeTest?.abort();
+  const result = mutationTail.then(operation);
+  mutationTail = result.then(() => undefined, () => undefined);
+  return result.finally(() => { configWrites -= 1; });
+}
+
 export const apiSettingsRoutes: BackgroundRoutes = {
   'toolbox:api:status': { access: 'public', platforms: ['chaoxing'], handle: async () => readApiStatus() },
   'toolbox:api:read': { access: 'options', handle: async () => readStoredApiConfig() },
-  'toolbox:api:save': { access: 'options', handle: async (message) => {
+  'toolbox:api:save': { access: 'options', handle: async (message) => withApiConfigMutation(async () => {
     if (!message.config || typeof message.config !== 'object') throw new Error('无效的 API 设置。');
     const config = normalizeApiConfig(message.config);
     validateApiConfig(config);
@@ -44,41 +69,46 @@ export const apiSettingsRoutes: BackgroundRoutes = {
     await chrome.storage.local.set({ [API_SETTINGS_KEY]: config });
     try {
       if (previous.endpoint && apiOrigin(previous.endpoint) !== apiOrigin(config.endpoint)) {
-        await chrome.permissions.remove({ origins: [apiOrigin(previous.endpoint)] });
+        await releaseApiOrigin(previous.endpoint);
       }
     } catch { /* Malformed old records or required site permissions do not invalidate the saved config. */ }
-  } },
-  'toolbox:api:clear': { access: 'options', handle: async () => {
+  }) },
+  'toolbox:api:clear': { access: 'options', handle: async () => withApiConfigMutation(async () => {
     await privateStorageReady;
     const previous = await readStoredApiConfig();
     await chrome.storage.local.set({ [API_SETTINGS_KEY]: emptyApiConfig() });
-    if (previous.endpoint) { try { await chrome.permissions.remove({ origins: [apiOrigin(previous.endpoint)] }); } catch { /* The stored key was still cleared. */ } }
-  } },
+    if (previous.endpoint) { try { await releaseApiOrigin(previous.endpoint); } catch { /* The stored key was still cleared. */ } }
+  }) },
   'toolbox:api:test': { access: 'options', handle: async () => {
     if (testing) throw new Error('正在检查连接，请稍候。');
+    if (configWrites) throw new Error('正在恢复或保存配置，请完成后再测试连接。');
     testing = true;
+    const abort = new AbortController();
+    activeTest = abort;
     const started = Date.now();
     try {
       const config = await requireApiConfig();
-      const abort = new AbortController();
+      if (abort.signal.aborted) throw new Error('配置已更改，连接测试已取消。');
       // Active-task extension API calls keep this explicit short check alive.
       const keepAlive = setInterval(() => { void chrome.runtime.getPlatformInfo().catch(() => undefined); }, 15000);
       try {
+        await waitForProvider('ai', abort.signal);
         await requestChatCompletion(config, [
           { role: 'system', content: '你正在进行 API 连通性检查，请简短回答。' },
           { role: 'user', content: '请只回复：连接成功。' },
         ], abort.signal);
         return { message: '连接成功，模型已返回正文。', latencyMs: Date.now() - started };
       } finally { clearInterval(keepAlive); }
-    } finally { testing = false; }
+    } finally { testing = false; if (activeTest === abort) activeTest = undefined; }
   } },
 };
 
 export function subscribeStoredApi(): void {
   const changed = () => { void broadcastPublic({ type: 'toolbox:api:changed' }, ['chaoxing']); };
   chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && (changes[API_SETTINGS_KEY] || changes[QUESTION_BANK_SETTINGS_KEY] || changes[PACING_SETTINGS_KEY])) activeTest?.abort();
     if (area === 'local' && changes[API_SETTINGS_KEY]) changed();
   });
-  chrome.permissions.onRemoved.addListener(changed);
+  chrome.permissions.onRemoved.addListener(() => { activeTest?.abort(); changed(); });
   chrome.permissions.onAdded.addListener(changed);
 }

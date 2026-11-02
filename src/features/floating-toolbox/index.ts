@@ -2,6 +2,7 @@ import type { AiAnswerController } from '../ai-answer/types';
 import type { ApiStatus } from '../api-settings/types';
 import type { StudyController } from '../chapter-study/types';
 import type { ZjoocStudyController } from '../zjooc-study/types';
+import type { QuestionAnswerController } from '../question-answer/types';
 import { getWorkspaces, getDefaultWorkspace, workspaceStyles } from '../workspace-registry';
 import { getPlatform, type Platform } from '../../shared/sites';
 import type { ExtractionResponse } from '../../shared/messages';
@@ -22,6 +23,7 @@ export interface FloatingPanelDependencies {
   getApiStatus(): Promise<ApiStatus>;
   platform?: Platform;
   ai?: AiAnswerController;
+  questionAnswer?: QuestionAnswerController;
   study?: StudyController;
   zjoocStudy?: ZjoocStudyController;
   loadUiPreferences(): Promise<UiSnapshot>;
@@ -152,7 +154,7 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
   const views = workspaces.map((workspace) => ({ id: workspace.id, view: workspace.create({
     getSettings: () => settings, saveSettings, extract: dependencies.extract,
     getApiStatus: dependencies.getApiStatus, openSettings: dependencies.openSettings, ai: dependencies.ai, study: dependencies.study,
-    zjoocStudy: dependencies.zjoocStudy,
+    questionAnswer: dependencies.questionAnswer, zjoocStudy: dependencies.zjoocStudy,
   }) }));
   for (const { id, view } of views) {
     view.element.id = `cx-view-${id}`;

@@ -7,6 +7,7 @@ export interface ApiConfig {
   apiKey: string;
   model: string;
   stream: boolean;
+  supportsImages?: boolean;
 }
 
 export interface ApiStatus {
@@ -17,7 +18,7 @@ export interface ApiStatus {
 }
 
 export function emptyApiConfig(): ApiConfig {
-  return { version: 1, endpoint: '', apiKey: '', model: '', stream: true };
+  return { version: 1, endpoint: '', apiKey: '', model: '', stream: true, supportsImages: false };
 }
 
 /** Accept a base URL or a complete endpoint; never add the suffix twice. */
@@ -47,6 +48,7 @@ export function normalizeApiConfig(value: unknown): ApiConfig {
   }
   result.endpoint = normalizeApiEndpoint(result.endpoint);
   if (typeof input.stream === 'boolean') result.stream = input.stream;
+  result.supportsImages = input.supportsImages === true;
   return result;
 }
 
