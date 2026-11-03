@@ -3,9 +3,13 @@ import type { AnswerRuntime } from './client';
 import type { AnswerFrameSnapshot } from './background';
 import { planAnswerSource } from './source-status';
 import { normalizeAnswer } from './normalize';
+import {
+  createReviewQuestion, isCompleteApplicableAnswer, sameApplicableAnswer,
+  type QuestionReviewRequest, type QuestionReviewResult,
+} from './review';
 import type { PacingWait } from '../answer-pacing/scheduler';
 import type {
-  AnswerControlSnapshot, AnswerPageCommand, AnswerPaper, AnswerResult, AnswerRow, AnswerSourceMode, AnswerSourcesStatus, CompletionPolicy,
+  AnswerControlSnapshot, AnswerPageCommand, AnswerPaper, AnswerResult, AnswerRow, AnswerSourceMode, AnswerSourcesStatus, ApplicableAnswer, CompletionPolicy,
   ImportedAnswer, PreparedQuestion, QuestionAnswerController, QuestionAnswerState, QuestionTarget,
 } from './types';
 
@@ -15,6 +19,7 @@ interface Dependencies {
   getSources(): Promise<AnswerSourcesStatus>;
   saveSource(source: AnswerSourceMode): Promise<void>;
   generate(prepared: PreparedQuestion, source: AnswerSourceMode, signal: AbortSignal, progress: (text: string) => void, status?: (text: string) => void): Promise<AnswerResult>;
+  review?(request: QuestionReviewRequest, signal: AbortSignal, progress: (text: string) => void, status?: (text: string) => void): Promise<QuestionReviewResult>;
   waitBeforeFill?: PacingWait;
   watchInterval?: number;
 }
@@ -28,6 +33,8 @@ interface Run {
   invalidated?: boolean;
   imported?: Map<string, ImportedAnswer>;
   importSource?: 'import' | 'local-bank';
+  kind?: 'answer' | 'review';
+  reviewBaseline?: Map<string, { version: string; answer: ApplicableAnswer }>;
 }
 const identity = (target: QuestionTarget) => ({ documentKey: target.documentKey, scopeKey: target.scopeKey, key: target.question.key, fingerprint: target.question.fingerprint });
 const rowId = (target: QuestionTarget) => `${target.frameId}:${target.documentId ?? ''}:${target.documentKey}:${target.scopeKey}:${target.question.key}`;
@@ -36,7 +43,10 @@ const cancelled = () => new DOMException('答题已暂停。', 'AbortError');
 /** The top page owns one serial queue shared by manual actions and chapter learning. */
 export function createQuestionAnswerController(deps: Dependencies): ChapterAnswerController {
   const canPreview = deps.canPreview ?? deps.isEnabled;
-  let state: QuestionAnswerState = { phase: 'idle', running: false, source: null, rows: [], followProgress: true, message: '打开测验、作业或考试后，点击开始答题。' };
+  let state: QuestionAnswerState = {
+    phase: 'idle', running: false, source: null, rows: [], followProgress: true,
+    message: '打开测验、作业或考试后，点击开始答题。', reviewing: false,
+  };
   let run: Run | undefined;
   let disposed = false;
   let sourcesRevision = 0;
@@ -67,7 +77,8 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
         rows.push({ id, target, phase: retained?.phase ?? (question.supported ? 'pending' : 'unsupported'),
           message: retained?.message ?? (question.supported ? '等待处理' : question.reason || '当前题型暂不支持。'),
           text: retained?.text ?? '', source: retained?.source, tags: retained?.tags,
-          currentAnswer: retained?.currentAnswer, readOnly: snapshot.complete || !question.supported });
+          currentAnswer: retained?.currentAnswer, readOnly: snapshot.complete || !question.supported,
+          review: snapshot.complete ? undefined : retained?.review });
         return id;
       });
       return { id: `${frame.frameId}:${frame.documentId ?? ''}:${snapshot.documentKey}:${snapshot.scopeKey}`,
@@ -87,9 +98,10 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
     const readOnly = Boolean(completed || !control.ready);
     const retained = state.rows.find(item => item.id === row.id);
     const stillFilled = retained?.phase === 'filled' && JSON.stringify(retained.currentAnswer) === JSON.stringify(control.answer);
-    const answerChanged = retained?.currentAnswer !== undefined && JSON.stringify(retained.currentAnswer) !== JSON.stringify(control.answer);
+    const answerChanged = retained?.currentAnswer !== undefined && !sameApplicableAnswer(retained.currentAnswer, control.answer);
     if (answerChanged && state.completion === 'saved') emit({ completion: 'unconfirmed' });
     updateRow(row.id, { currentAnswer: control.answer, readOnly,
+      review: answerChanged || !control.ready || completed ? undefined : retained?.review,
       ...(!preservePhase ? { phase: control.hasContent ? (stillFilled ? 'filled' : control.complete ? 'existing' : 'needs-review')
         : !row.target.question.supported ? 'unsupported' : 'pending',
       message: completed ? '平台已完成，本页仅供阅览。' : readOnly ? control.error || '当前题目只可阅览。'
@@ -241,10 +253,148 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
       });
       if (!written.control?.complete) throw new Error('填写后的状态未通过核对，请检查本题。');
       current.checkedVersions?.set(row.id, written.control.version);
-      updateRow(row.id, { phase: 'filled', currentAnswer: written.control.answer, readOnly: false, message: result.message ? `已填写并核对。${result.message}` : '已填写并核对。' });
+      updateRow(row.id, {
+        phase: 'filled', currentAnswer: written.control.answer, readOnly: false,
+        ...(!sameApplicableAnswer(before.answer, written.control.answer) ? { review: undefined } : {}),
+        message: result.message ? `已填写并核对。${result.message}` : '已填写并核对。',
+      });
     } catch (error) {
       throw changed ?? error;
     } finally { watching = false; clearInterval(watch); }
+  }
+
+  async function executeReview(current: Run): Promise<void> {
+    if (run) throw new Error('当前已有答题任务，请先暂停。');
+    if (state.sourceSaving) throw new Error('正在保存答题来源，请稍后继续。');
+    if (!deps.isEnabled()) throw new Error('请先开启批量答题功能。');
+    const review = deps.review;
+    if (!review) throw new Error('当前版本尚未接入整卷复检服务。');
+    ++previewRevision;
+    previewRequested = false;
+    run = current;
+    emit({
+      running: true, reviewing: true, previewing: false, followProgress: true, completion: undefined,
+      phase: 'scanning', message: '正在重新读取整卷和当前答案…', reviewProgress: '正在重新读取整卷…',
+      reviewError: undefined, rows: state.rows.map(row => ({ ...row, review: undefined })),
+    });
+    try {
+      await previewTask;
+      check(current);
+      const frames = await deps.runtime.scan(current.abort.signal);
+      check(current);
+      const scope = frames.filter(frame => frame.snapshot.scene !== 'unsupported');
+      if (scope.length !== 1) throw new Error(scope.length ? '当前页面包含多个题目范围，无法进行单一整卷复检。' : '未读取到可复检的整卷题目。');
+      const frame = scope[0];
+      if (!frame.snapshot.allLoaded) throw new Error('尚未核实整卷题量或页面仍有分页，不能发送整卷复检。');
+      if (frame.snapshot.complete) throw new Error('平台已显示本卷完成，不能再编辑复检；请核对页面状态。');
+      const rows = publishScope([frame]);
+      if (!rows.length) throw new Error('整卷没有可复检题目。');
+      const unsupported = rows.filter(row => !row.target.question.supported);
+      if (unsupported.length) throw new Error(`仍有 ${unsupported.length} 道题不支持复检：第 ${unsupported.map(row => row.target.question.number).join('、')} 题。`);
+      if (rows.some(row => row.target.question.textRecognition?.status === 'pending')) throw new Error('仍有题目文字正在识别，请稍候刷新阅览后再复检。');
+
+      const sources = await refreshSources();
+      check(current);
+      if (!sources) throw new Error(state.sourcesError || '无法读取 AI 复检配置。');
+      if (!sources.ai.enabled) throw new Error('AI 作答功能未启用，不能进行整卷复检。');
+      if (!sources.ai.configured || !sources.ai.authorized) throw new Error('尚未配置并授权 AI 接口，不能进行整卷复检。');
+      if (rows.some(row => row.target.question.images.length) && sources.ai.supportsImages !== true) {
+        throw new Error('整卷包含图片题，但当前模型未启用图片输入能力；请先在 API 设置中确认模型能力。');
+      }
+
+      emit({ phase: 'running', message: '正在从页面重新核对全部答案；未完成时不会发送复检。', reviewProgress: `正在核对页面答案 0/${rows.length}` });
+      const baseline = new Map<string, { version: string; answer: ApplicableAnswer }>();
+      for (const [index, row] of rows.entries()) {
+        check(current);
+        emit({ reviewProgress: `正在核对页面答案 ${index + 1}/${rows.length}` });
+        const control = await read(current, row.target);
+        updateControl(row, control, true);
+        if (!control.ready) throw new Error(`第 ${row.target.question.number} 题答题控件未就绪：${control.error || '请检查页面。'}`);
+        if (!control.complete || !isCompleteApplicableAnswer(row.target.question, control.answer)) {
+          throw new Error(`仍有题目未完整作答：第 ${row.target.question.number} 题。请完成整卷后重试。`);
+        }
+        baseline.set(row.id, { version: control.version, answer: structuredClone(control.answer) });
+      }
+      current.reviewBaseline = baseline;
+
+      const items: QuestionReviewRequest['items'] = [];
+      for (const [index, row] of rows.entries()) {
+        check(current);
+        let images: string[] = [];
+        if (row.target.question.images.length) {
+          emit({ reviewProgress: `正在读取图片 ${index + 1}/${rows.length}` });
+          const prepared = (await page(current, row.target, { action: 'images', ...identity(row.target) })).prepared;
+          if (!prepared || prepared.images.length !== row.target.question.images.length) {
+            throw new Error(`第 ${row.target.question.number} 题图片未能完整读取，整卷未发送复检。`);
+          }
+          images = prepared.images;
+        }
+        const control = baseline.get(row.id)!;
+        items.push({
+          questionId: `q-${index + 1}`,
+          question: createReviewQuestion(row.target.question),
+          currentAnswer: structuredClone(control.answer),
+          images,
+        });
+      }
+
+      const request: QuestionReviewRequest = { batchId: crypto.randomUUID(), items };
+      emit({ reviewProgress: `正在将 ${rows.length} 道题一次性发送给 AI 复检…`, message: '整卷复检请求中；可随时停止。' });
+      const result = await review(request, current.abort.signal, text => {
+        if (run === current && !current.abort.signal.aborted) emit({ reviewProgress: `正在接收 AI 复检结果…（${text.length} 字符）` });
+      }, text => {
+        if (run === current && !current.abort.signal.aborted) emit({ reviewProgress: text });
+      });
+      check(current);
+
+      // A model call can take minutes. Re-read every answer before publishing any finding.
+      for (const [index, row] of rows.entries()) {
+        emit({ reviewProgress: `正在确认页面答案未变化 ${index + 1}/${rows.length}` });
+        const control = await read(current, row.target);
+        updateControl(row, control, true);
+        const before = baseline.get(row.id)!;
+        if (!control.ready || !control.complete || control.version !== before.version
+            || !sameApplicableAnswer(control.answer, before.answer)) {
+          throw new Error('复检期间页面答案已变化，整卷结果已丢弃；请确认后重新复检。');
+        }
+      }
+      check(current);
+      const outcomes = new Map(result.items.map(item => [item.questionId, item]));
+      const rowIds = new Map(rows.map((row, index) => [row.id, `q-${index + 1}`]));
+      const suspect = result.items.filter(item => item.status === 'suspect').length;
+      const uncertain = result.items.filter(item => item.status === 'uncertain').length;
+      emit({
+        rows: state.rows.map(row => {
+          const outcome = outcomes.get(rowIds.get(row.id) ?? '');
+          if (!outcome || outcome.status === 'pass') return { ...row, review: undefined };
+          if (outcome.status === 'suspect') return {
+            ...row,
+            review: { status: 'suspect', suggestedAnswer: outcome.suggestedAnswer, reason: outcome.reason! },
+          };
+          return { ...row, review: { status: 'uncertain', reason: outcome.reason! } };
+        }),
+        phase: 'complete', message: suspect || uncertain
+          ? `AI 整卷复检完成：${suspect} 道疑似错误，${uncertain} 道需人工确认。页面答案未被修改。`
+          : 'AI 整卷复检完成：未发现需要标记的题目。页面答案未被修改。',
+        reviewProgress: `已复检 ${rows.length} 题`, reviewError: undefined,
+      });
+    } catch (error) {
+      const message = current.invalidated ? '题目页面已更换，请重新读取题目。' : error instanceof Error ? error.message : '整卷复检失败，请检查页面。';
+      emit({
+        phase: current.abort.signal.aborted ? 'paused' : 'error',
+        message,
+        reviewProgress: undefined,
+        reviewError: current.abort.signal.aborted ? undefined : message,
+        rows: state.rows.map(row => ({ ...row, review: undefined })),
+      });
+    } finally {
+      if (run === current) {
+        run = undefined;
+        current.abort.abort();
+        deps.runtime.cancel();
+        emit({ running: false, reviewing: false });
+      }
+    }
   }
 
   async function execute(current: Run): Promise<StudyTaskOutcome | undefined> {
@@ -255,7 +405,10 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
     previewRequested = false;
     run = current;
     current.checkedVersions = new Map();
-    emit({ running: true, previewing: false, followProgress: true, completion: undefined, phase: 'scanning', message: '正在读取当前页面各题目框架…' });
+    emit({
+      running: true, reviewing: false, previewing: false, followProgress: true, completion: undefined,
+      phase: 'scanning', message: '正在读取当前页面各题目框架…', reviewProgress: undefined, reviewError: undefined,
+    });
     let activeId: string | undefined;
     try {
       // Let earlier transport reads (including their timeout cleanup) settle before any answer work.
@@ -355,22 +508,38 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
   }
   const launch = (options: Partial<Run> = {}) => {
     if (run || state.sourceSaving) return;
-    void execute({ ...options, abort: new AbortController() }).catch(error => emit({ phase: 'error', running: false, message: error instanceof Error ? error.message : '无法开始答题。' }));
+    const current: Run = { ...options, abort: new AbortController() };
+    const operation = current.kind === 'review' ? executeReview(current) : execute(current);
+    void operation.catch(error => {
+      const message = error instanceof Error ? error.message : '无法开始答题。';
+      emit({
+        phase: 'error', running: false, reviewing: false, message,
+        ...(current.kind === 'review' ? { reviewError: message, reviewProgress: undefined } : {}),
+      });
+    });
   };
   const stop = () => {
+    const reviewing = run?.kind === 'review';
     ++previewRevision;
     previewRequested = false;
     if (run) run.abort.abort();
     deps.runtime.cancel();
-    emit({ previewing: false, phase: 'paused', message: '已暂停；已填写内容保留。' });
+    emit({
+      previewing: false, phase: 'paused', reviewing: false,
+      message: reviewing ? '已停止整卷复检；页面答案未被修改。' : '已暂停；已填写内容保留。',
+      ...(reviewing ? { reviewProgress: undefined, reviewError: undefined } : {}),
+    });
   };
   const unsubscribeInvalidation = deps.runtime.subscribeInvalidation?.(() => {
     if (disposed) return;
     ++previewRevision;
     previewRequested = false;
     if (run) { run.invalidated = true; stop(); }
-    emit({ rows: state.rows.map(row => ({ ...row, readOnly: true })), previewing: false, previewStale: true,
-      message: '题目页面已更换，请重新读取题目。' });
+    emit({
+      rows: state.rows.map(row => ({ ...row, readOnly: true, review: undefined })),
+      previewing: false, previewStale: true, reviewing: false, reviewProgress: undefined, reviewError: undefined,
+      message: '题目页面已更换，请重新读取题目。',
+    });
   });
   void refreshSources();
   return {
@@ -378,6 +547,10 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
     subscribe(listener) { listeners.add(listener); listener(getState()); return () => listeners.delete(listener); },
     start() { launch(); }, stop,
     preview,
+    reviewAnswers() {
+      if (!deps.review || disposed || run || state.sourceSaving) return;
+      launch({ kind: 'review' });
+    },
     async applyImportedAnswers(entries, source = 'import') {
       if (disposed || run || state.sourceSaving || state.previewing || state.previewStale) throw new Error('请先结束当前任务并重新读取题目，再填写导入答案。');
       if (!entries.length || entries.length > 300) throw new Error('请先解析并核对 1 至 300 条可匹配答案。');

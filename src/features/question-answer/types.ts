@@ -6,7 +6,7 @@ export const ANSWER_PREFERENCES_KEY = 'toolbox.question-answer.preferences.v1';
 export interface AnswerSourcesStatus {
   selection: AnswerSourceMode | null;
   bank: { configured: boolean; authorized: boolean };
-  ai: { configured: boolean; authorized: boolean; enabled: boolean };
+  ai: { configured: boolean; authorized: boolean; enabled: boolean; supportsImages?: boolean };
 }
 export interface QuestionOption { id: string; label: string; text: string }
 export interface QuestionField { id: string; options?: QuestionOption[] }
@@ -65,6 +65,11 @@ export interface AnswerRow {
   id: string; target: QuestionTarget; phase: AnswerRowPhase; message: string; text: string;
   source?: AnswerSource; tags?: AnswerResult['tags'];
   currentAnswer?: ApplicableAnswer; readOnly?: boolean;
+  review?: {
+    status: 'suspect' | 'uncertain';
+    suggestedAnswer?: ApplicableAnswer;
+    reason: string;
+  };
 }
 export interface AnswerPaper {
   id: string; frameId: number; documentId?: string; documentKey: string; scopeKey: string;
@@ -77,6 +82,7 @@ export interface QuestionAnswerState {
   selectedId?: string; activeId?: string; followProgress?: boolean;
   previewing?: boolean; previewStale?: boolean; papers?: AnswerPaper[];
   completion?: 'saving' | 'submitting' | 'saved' | 'submitted' | 'unconfirmed';
+  reviewing?: boolean; reviewProgress?: string; reviewError?: string;
 }
 export interface QuestionAnswerController {
   getState(): QuestionAnswerState;
@@ -84,6 +90,7 @@ export interface QuestionAnswerController {
   start(): void; stop(): void; retry(id: string, replace?: boolean): void; setSource(source: AnswerSourceMode): void;
   refreshSources(): void; settingsChanged(): void; dispose(): void;
   preview?(): void; selectQuestion?(id: string): void; followProgress?(): void;
+  reviewAnswers?(): void;
   applyImportedAnswers?(entries: ImportedAnswer[], source?: 'import' | 'local-bank'): Promise<void>;
 }
 export const ANSWER_FRAME_PORT = 'toolbox:question-answer:frames:v1';

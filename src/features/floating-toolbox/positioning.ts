@@ -42,7 +42,10 @@ export function installDragPositioning(dependencies: {
   for (const handle of dependencies.handles) {
     handle.addEventListener('pointerdown', (event) => {
       if (disposed || drag || event.button !== 0 || !event.isPrimary) return;
-      if (event.target instanceof win.Element && event.target.closest('button, input, textarea, select, a, [contenteditable], [data-no-drag]')) return;
+      if (event.target instanceof win.Element) {
+        const interactive = event.target.closest('button, input, textarea, select, a, [contenteditable], [data-no-drag]');
+        if (interactive && interactive !== handle) return;
+      }
       suppressPointer = undefined;
       try { handle.setPointerCapture(event.pointerId); } catch { return; }
       dependencies.begin();

@@ -31,13 +31,14 @@ export async function requireApiConfig(): Promise<ApiConfig> {
 export async function readApiStatus(): Promise<ApiStatus> {
   const config = await readStoredApiConfig();
   try { validateApiConfig(config); } catch {
-    return { configured: false, authorized: false, model: '', message: '尚未配置 API，请填写完整接口地址、Key 和模型。' };
+    return { configured: false, authorized: false, model: '', supportsImages: false, message: '尚未配置 API，请填写完整接口地址、Key 和模型。' };
   }
   const authorized = await chrome.permissions.contains({ origins: [apiOrigin(config.endpoint)] });
   return {
     configured: true,
     authorized,
     model: config.model,
+    supportsImages: config.supportsImages === true,
     message: authorized ? 'API 已配置，连接状态可在设置页手动检查。' : 'API 域名尚未授权，请前往设置重新保存并授权。',
   };
 }

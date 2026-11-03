@@ -6,6 +6,7 @@ import { defaultUiPreferences, type UiPreferences, type UiSnapshot } from './pre
 
 export interface FloatingContainer {
   setMode(minimized: boolean): void;
+  setHidden(hidden: boolean): void;
   applySnapshot(snapshot: UiSnapshot): void;
   resetPosition(): void;
   layout(): void;
@@ -22,6 +23,7 @@ export function installFloatingContainer(dependencies: {
   viewport?(): Viewport;
   persistence: UiPersistence;
   onModeChange(minimized: boolean): void;
+  onHiddenChange?(hidden: boolean): void;
   onError(message: string): void;
 }): FloatingContainer {
   const { host, surface } = dependencies;
@@ -64,7 +66,9 @@ export function installFloatingContainer(dependencies: {
   }
   function width(view: Viewport): void {
     const area = viewportArea(view);
-    style('width', String(Math.min(preferences.minimized ? TOOLBOX_LAYOUT.compactWidth : TOOLBOX_LAYOUT.expandedWidth, area.width)) + 'px');
+    const preferred = preferences.hidden ? TOOLBOX_LAYOUT.dotTargetSize
+      : preferences.minimized ? TOOLBOX_LAYOUT.compactWidth : TOOLBOX_LAYOUT.expandedWidth;
+    style('width', String(Math.min(preferred, area.width)) + 'px');
   }
   function rememberPosition(): void {
     preferences = { ...preferences, ...encodePosition(point, viewport()) };
@@ -94,12 +98,15 @@ export function installFloatingContainer(dependencies: {
         changing = false;
       }
       const modeChanged = preferences.minimized !== snapshot.preferences.minimized;
+      const hiddenChanged = Boolean(preferences.hidden) !== Boolean(snapshot.preferences.hidden);
       preferences = { ...snapshot.preferences };
       host.dataset.minimized = String(preferences.minimized);
+      host.dataset.hidden = String(Boolean(preferences.hidden));
       if (modeChanged) dependencies.onModeChange(preferences.minimized);
+      if (hiddenChanged) dependencies.onHiddenChange?.(Boolean(preferences.hidden));
       if (own && placed) {
         // Acknowledgement must not re-position a card that has since grown or moved.
-        place(point, modeChanged && !preferences.minimized ? 'fit' : 'preserve');
+        place(point, (modeChanged && !preferences.minimized) || (hiddenChanged && !preferences.hidden) ? 'fit' : 'preserve');
         return;
       }
       pendingLegacy = snapshot.legacy;
@@ -171,7 +178,8 @@ export function installFloatingContainer(dependencies: {
     positioner.cancel(false);
     changing = false;
     sync.setInteracting(true);
-    preferences = { ...defaultUiPreferences(), minimized: preferences.minimized };
+    const defaults = defaultUiPreferences();
+    preferences = { ...preferences, x: defaults.x, y: defaults.y };
     pendingLegacy = undefined;
     pendingPlacement = undefined;
     placed = host.isConnected;
@@ -193,7 +201,9 @@ export function installFloatingContainer(dependencies: {
   win.visualViewport?.addEventListener('scroll', layout, { signal: abort.signal });
 
   host.dataset.minimized = String(preferences.minimized);
+  host.dataset.hidden = String(Boolean(preferences.hidden));
   dependencies.onModeChange(preferences.minimized);
+  dependencies.onHiddenChange?.(Boolean(preferences.hidden));
   layout();
   sync.start();
   return {
@@ -212,6 +222,23 @@ export function installFloatingContainer(dependencies: {
       else place(point, minimized ? 'preserve' : 'fit');
       rememberPosition();
       sync.commit({ position: { x: preferences.x, y: preferences.y }, minimized });
+      sync.setInteracting(false);
+    },
+    setHidden(hidden) {
+      if (disposed || Boolean(preferences.hidden) === hidden) return;
+      changing = true;
+      positioner.cancel(false);
+      changing = false;
+      sync.setInteracting(true);
+      pendingLegacy = undefined;
+      pendingPlacement = undefined;
+      preferences = { ...preferences, hidden };
+      host.dataset.hidden = String(hidden);
+      dependencies.onHiddenChange?.(hidden);
+      if (!placed) layout();
+      else place(point, hidden ? 'preserve' : 'fit');
+      rememberPosition();
+      sync.commit({ position: { x: preferences.x, y: preferences.y }, hidden });
       sync.setInteracting(false);
     },
     applySnapshot: sync.receive,

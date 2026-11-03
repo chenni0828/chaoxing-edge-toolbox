@@ -22,7 +22,9 @@ function install(): void {
       return;
     }
     if (message.kind === 'study-command') {
-      void handleStudyPageRequest(window, message.request).then(result => {
+      void handleStudyPageRequest(window, message.request, progress => {
+        bridge.send(bridgeMessage({ kind: 'study-progress', requestId: message.requestId, progress }));
+      }).then(result => {
         bridge.send(bridgeMessage({ kind: 'study-result', requestId: message.requestId, result }));
       }).catch(() => {
         bridge.send(bridgeMessage({ kind: 'study-result', requestId: message.requestId, result: { ok: false, error: '章节任务执行失败，请暂停后重试。' } }));

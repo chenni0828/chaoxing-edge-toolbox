@@ -17,6 +17,12 @@ export const questionAnswerStyles = `
 .answer-settings-actions, .answer-actions, .answer-result-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .question-answer-view .button { min-height: 30px; padding: 4px 8px; border-radius: 10px; }
 .answer-settings-actions { flex-direction: row; }
+.answer-review-actions { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border-inner); border-radius: 10px; background: var(--surface-page); }
+.answer-review-actions .button { width: 100%; }
+.answer-review-status { margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.answer-review-status[data-kind="error"], .answer-review-status[data-kind="suspect"] { color: var(--error-text); }
+.answer-review-status[data-kind="uncertain"] { color: var(--warning-text); }
+.answer-review-status[data-kind="info"] { color: var(--primary-hover); }
 .answer-config-status { margin: 0; padding: 7px 8px; border: 1px solid var(--tint-border); border-radius: 10px; color: var(--text-body); background: var(--tint-bg); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .answer-config-status[data-kind="warning"] { color: var(--warning-text); border-color: var(--warning-border); background: var(--warning-bg); }
 .answer-message { margin: 0; color: var(--text-body); white-space: pre-wrap; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -32,9 +38,13 @@ export const questionAnswerStyles = `
 .answer-question-grid .button[data-phase="filled"], .answer-question-grid .button[data-phase="existing"] { background: var(--tint-bg); color: var(--primary-hover); }
 .answer-question-grid .button[data-phase="error"], .answer-question-grid .button[data-phase="needs-review"], .answer-question-grid .button[data-phase="unsupported"] { background: var(--warning-bg); color: var(--warning-text); }
 .answer-question-grid .button[data-phase="querying"] { border-color: var(--primary); color: var(--primary-hover); }
+.answer-question-grid .button[data-review="suspect"] { border-color: var(--error-border); color: var(--error-text); background: var(--error-bg); }
+.answer-question-grid .button[data-review="uncertain"] { border-color: var(--warning-border); color: var(--warning-text); background: var(--warning-bg); }
 .answer-question-grid .button[aria-pressed="true"] { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); font-weight: 700; }
 .answer-results { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
 .answer-result { display: grid; gap: 6px; padding: 8px 10px; min-width: 0; border: 1px solid var(--border-inner); border-radius: 12px; background: var(--surface-page); }
+.answer-result[data-review="suspect"] { border-color: var(--error-border); box-shadow: inset 3px 0 0 var(--error-text); }
+.answer-result[data-review="uncertain"] { border-color: var(--warning-border); box-shadow: inset 3px 0 0 var(--warning-text); }
 .answer-result-title { min-width: 0; color: var(--text-title); font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .answer-result-stem, .answer-result-message { margin: 0; color: var(--text-body); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .answer-result-stem { padding-bottom: 3px; }
@@ -53,6 +63,14 @@ export const questionAnswerStyles = `
 .answer-current { padding: 7px 8px; border: 1px solid var(--border-inner); border-radius: 8px; background: var(--surface); }
 .answer-answer-label { color: var(--text-muted); font-size: 11px; }
 .answer-current pre { margin: 4px 0 0; color: var(--text-body); white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.6; }
+.answer-review { display: grid; gap: 6px; padding: 7px 8px; border: 1px solid var(--border-inner); border-radius: 8px; background: var(--surface); }
+.answer-review-heading, .answer-review-reason { margin: 0; color: var(--text-body); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.answer-review-heading { font-weight: 700; }
+.answer-review-suggestion pre { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.6; }
+.answer-result[data-review="suspect"] .answer-review { border-color: var(--error-border); background: var(--error-bg); }
+.answer-result[data-review="suspect"] .answer-review-heading { color: var(--error-text); }
+.answer-result[data-review="uncertain"] .answer-review { border-color: var(--warning-border); background: var(--warning-bg); }
+.answer-result[data-review="uncertain"] .answer-review-heading { color: var(--warning-text); }
 .answer-completion-status { margin: 0; padding: 7px 8px; border-radius: 9px; background: var(--tint-bg); color: var(--primary-hover); font-size: 12px; line-height: 1.5; }
 .answer-completion-status[data-kind="warning"] { background: var(--warning-bg); color: var(--warning-text); }
 .answer-result-message { color: var(--text-muted); }

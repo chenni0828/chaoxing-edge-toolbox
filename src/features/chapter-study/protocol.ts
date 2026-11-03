@@ -1,4 +1,4 @@
-import { STUDY_RATES, type StudyPageRequest, type StudyPageResult, type StudyPreferences, type StudySession } from './types';
+import { STUDY_RATES, type StudyPageRequest, type StudyPageResult, type StudyPreferences, type StudySession, type StudyTaskProgress, type StudyNotice } from './types';
 
 export const STUDY_PORT = 'toolbox:chapter-study:frame';
 export const STUDY_WAKE = 'toolbox:chapter-study:wake';
@@ -7,11 +7,27 @@ const taskTypes = new Set(['video', 'courseware', 'audio-ppt', 'book', 'hyperlin
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const short = (value: unknown, max = 500): value is string => typeof value === 'string' && value.length <= max;
 export const isStudyId = (value: unknown): value is string => typeof value === 'string' && /^[\w:-]{1,200}$/.test(value);
+export function isStudyProgress(value: unknown): value is StudyTaskProgress {
+  return record(value) && isStudyId(value.runId) && short(value.taskKey, 300) && isStudyId(value.documentKey)
+    && Number.isSafeInteger(value.sequence) && (value.sequence as number) > 0
+    && typeof value.phase === 'string' && ['verification', 'recovering', 'playing', 'manual-play'].includes(value.phase)
+    && short(value.message);
+}
+export function progressMatches(progress: StudyTaskProgress, request: StudyPageRequest): boolean {
+  return request.action === 'run' && progress.runId === request.runId
+    && progress.taskKey === request.taskKey && progress.documentKey === request.documentKey;
+}
+export function isStudyNotice(value: unknown): value is StudyNotice {
+  return record(value) && isStudyId(value.runId) && short(value.eventId, 800) && short(value.message)
+    && typeof value.kind === 'string' && ['verification', 'failure', 'clear'].includes(value.kind);
+}
 export function isStudyPreferences(value: unknown): value is StudyPreferences {
   return record(value) && value.version === 1 && typeof value.startMode === 'string' && ['first-unfinished', 'current-forward'].includes(value.startMode)
     && typeof value.muted === 'boolean' && STUDY_RATES.some(rate => rate === value.playbackRate)
     && (value.videoQuiz === undefined || value.videoQuiz === 'random' || value.videoQuiz === 'ignore')
-    && (value.autoResume === undefined || typeof value.autoResume === 'boolean');
+    && (value.autoResume === undefined || typeof value.autoResume === 'boolean')
+    && (value.chapterAnswer === undefined || typeof value.chapterAnswer === 'boolean')
+    && (value.chapterAnswerFinish === undefined || value.chapterAnswerFinish === 'save' || value.chapterAnswerFinish === 'submit' || value.chapterAnswerFinish === 'stay');
 }
 export function isStudyPageRequest(value: unknown): value is StudyPageRequest {
   if (!record(value)) return false;
@@ -54,6 +70,7 @@ export function isStudySession(value: unknown): value is StudySession {
       || typeof value.paused !== 'boolean' || !Number.isSafeInteger(value.completed) || (value.completed as number) < 0
       || (value.expectedChapterId !== undefined && !short(value.expectedChapterId, 100))
       || (value.finished !== undefined && typeof value.finished !== 'boolean')
+      || (value.startedByUser !== undefined && typeof value.startedByUser !== 'boolean')
       || (value.startMode !== undefined && value.startMode !== 'first-unfinished' && value.startMode !== 'current-forward')) return false;
   return Array.isArray(value.visited) && value.visited.length <= 5000 && value.visited.every(id => short(id, 100))
     && Array.isArray(value.skipped) && value.skipped.length <= 5000 && value.skipped.every(item => short(item, 500));

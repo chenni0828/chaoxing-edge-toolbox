@@ -1,7 +1,10 @@
 import { isSupportedContent } from '../../core/background-context';
 import { requireApiConfig } from '../api-settings/background';
 import { requestChatCompletion } from '../api-settings/model-client';
-import { AI_GENERATION_PORT } from '../api-settings/types';
+import { API_SETTINGS_KEY, AI_GENERATION_PORT } from '../api-settings/types';
+import { waitForProvider } from '../answer-pacing/background';
+import { PACING_SETTINGS_KEY } from '../answer-pacing/types';
+import { SETTINGS_KEY } from '../toolbox-settings/types';
 import { readStoredSettings } from '../toolbox-settings/background';
 import { buildAnswerMessages } from './prompt';
 import { isThinkLadderUrl } from './adapters/think-ladder';
@@ -22,6 +25,12 @@ const activeTabs = new Map<number, AbortController>();
 
 export function installAiGenerationBroker(): void {
   chrome.tabs.onRemoved.addListener((tabId) => { activeTabs.get(tabId)?.abort(); activeTabs.delete(tabId); });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && [API_SETTINGS_KEY, SETTINGS_KEY, PACING_SETTINGS_KEY].some(key => changes[key])) {
+      for (const abort of activeTabs.values()) abort.abort();
+    }
+  });
+  chrome.permissions.onRemoved.addListener(() => { for (const abort of activeTabs.values()) abort.abort(); });
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== AI_GENERATION_PORT) return;
     const sender = port.sender;
@@ -33,11 +42,18 @@ export function installAiGenerationBroker(): void {
     let started = false;
     const abort = new AbortController();
     let connected = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const touch = () => { clearTimeout(timer); timer = setTimeout(() => abort.abort(), 45000); };
     const send = (message: Record<string, unknown>) => {
       if (connected) { try { port.postMessage(message); } catch { abort.abort(); } }
     };
-    port.onDisconnect.addListener(() => { connected = false; abort.abort(); });
+    abort.signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      if (connected) { connected = false; try { port.disconnect(); } catch { /* Already closed. */ } }
+    }, { once: true });
+    port.onDisconnect.addListener(() => { void chrome.runtime.lastError; connected = false; clearTimeout(timer); abort.abort(); });
     port.onMessage.addListener((message: { type?: string; question?: unknown }) => {
+      if (message?.type === 'heartbeat') { if (started && !abort.signal.aborted) { touch(); send({ type: 'heartbeat' }); } return; }
       if (message?.type !== 'generate' || started) return;
       started = true;
       if (!isQuestion(message.question)) { send({ type: 'error', error: '当前题目格式无效，未请求 API。' }); return; }
@@ -45,16 +61,20 @@ export function installAiGenerationBroker(): void {
       void (async () => {
         try {
           if (activeTabs.has(tabId)) throw new Error('当前标签页已有生成任务，请先暂停后重试。');
-          activeTabs.set(tabId, abort);
+          activeTabs.set(tabId, abort); touch();
           const settings = await readStoredSettings();
           if (!settings.enabled || !settings.features['ai-answer']) throw new Error('AI 作答已关闭，请先开启功能。');
           const config = await requireApiConfig();
           if (abort.signal.aborted) return;
+          await waitForProvider('ai', abort.signal, text => send({ type: 'status', text }));
+          if (abort.signal.aborted) return;
+          send({ type: 'status', text: '正在独立生成本题回答…' });
           const answer = await requestChatCompletion(config, buildAnswerMessages(question), abort.signal, (text) => send({ type: 'progress', text }));
           if (!abort.signal.aborted) send({ type: 'result', text: answer });
         } catch (error) {
           if (!abort.signal.aborted) send({ type: 'error', error: error instanceof Error ? error.message : '生成失败，请手动重试。' });
         } finally {
+          clearTimeout(timer);
           if (activeTabs.get(tabId) === abort) activeTabs.delete(tabId);
         }
       })();

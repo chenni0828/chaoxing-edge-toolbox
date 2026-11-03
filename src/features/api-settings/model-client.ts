@@ -2,6 +2,7 @@ import type { ApiConfig } from './types';
 
 export type ChatContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
 export interface ChatMessage { role: 'system' | 'user'; content: string | ChatContentPart[] }
+export interface ChatCompletionOptions { totalTimeoutMs?: number }
 
 export class ModelRequestError extends Error {
   constructor(public readonly code: string, message: string) { super(message); this.name = 'ModelRequestError'; }
@@ -37,13 +38,17 @@ export async function requestChatCompletion(
   messages: ChatMessage[],
   signal: AbortSignal,
   onProgress: (text: string) => void = () => {},
+  options: ChatCompletionOptions = {},
 ): Promise<string> {
   const abort = new AbortController();
   let timedOut = false;
   const cancel = () => abort.abort();
   signal.addEventListener('abort', cancel, { once: true });
   if (signal.aborted) cancel();
-  const totalTimer = setTimeout(() => { timedOut = true; abort.abort(); }, 90000);
+  const requestedTimeout = options.totalTimeoutMs;
+  const totalTimeoutMs = typeof requestedTimeout === 'number' && Number.isFinite(requestedTimeout)
+    ? Math.min(600_000, Math.max(1_000, requestedTimeout)) : 90_000;
+  const totalTimer = setTimeout(() => { timedOut = true; abort.abort(); }, totalTimeoutMs);
   // Extension service workers cannot wait indefinitely for response headers.
   const headerTimer = setTimeout(() => { timedOut = true; abort.abort(); }, 25000);
   let receivedResponse = false;

@@ -69,11 +69,13 @@ function questionText(question: QuestionSnapshot): string {
 export function createAnswerExchangeView(dependencies: Dependencies): WorkspaceView {
   const bank = dependencies.bank ?? { read: readLocalBank, save: saveLocalBank, clear: clearLocalBank };
   const root = element('details', 'answer-exchange');
+  root.open = true;
   root.append(element('summary', '', '外部 AI 与本地题库'));
   const content = element('div', 'answer-exchange-content');
-  const hint = element('p', 'answer-exchange-hint', '复制提示词交给其他 AI，再粘贴返回的 JSON。先核对，再填写或存入本地题库；无需配置 API。');
+  const hint = element('p', 'answer-exchange-hint', '点击“复制当前全部（含提示词）”，把完整题目和答题要求交给其他 AI；再粘贴返回的 JSON 并解析填入。已有答案保留，插件不会自动提交。');
   const promptActions = element('div', 'answer-exchange-actions');
-  const copyAnswers = button('复制当前题目提示词', 'copy-answers');
+  const copyAnswers = button('复制当前全部（含提示词）', 'copy-answers');
+  copyAnswers.title = '一次复制当前页面全部可导出的题目和答案格式要求';
   const copyBank = button('复制题库生成提示词', 'copy-bank');
   promptActions.append(copyAnswers, copyBank);
   const input = element('textarea', 'answer-exchange-input');
@@ -82,14 +84,16 @@ export function createAnswerExchangeView(dependencies: Dependencies): WorkspaceV
   input.spellcheck = false;
   input.maxLength = MAX_FILE_BYTES;
   const importActions = element('div', 'answer-exchange-actions');
-  const parse = button('解析并预览', 'parse');
+  const parseFill = button('解析并填入', 'parse-fill');
+  parseFill.classList.add('primary');
+  const parse = button('仅解析预览', 'parse');
   const fileLabel = element('label', 'button answer-exchange-file-label', '导入 JSON 文件');
   const file = element('input', 'answer-exchange-file');
   file.type = 'file';
   file.accept = '.json,application/json';
   file.setAttribute('aria-label', '导入答案或题库 JSON 文件');
   fileLabel.append(file);
-  importActions.append(parse, fileLabel);
+  importActions.append(parseFill, parse, fileLabel);
   const bankLine = element('div', 'answer-exchange-bank-line');
   const bankCount = element('p', 'answer-exchange-hint', '本地题库：待读取');
   const bankActions = element('div', 'answer-exchange-actions');
@@ -119,7 +123,7 @@ export function createAnswerExchangeView(dependencies: Dependencies): WorkspaceV
   const fallback = element('textarea', 'answer-exchange-input');
   fallback.readOnly = true;
   fallback.hidden = true;
-  fallback.setAttribute('aria-label', '待手动复制的外部 AI 提示词');
+  fallback.setAttribute('aria-label', '待手动复制的全部题目与提示词');
   content.append(hint, promptActions, input, importActions, bankLine, confirmation, preview, status, fallback);
   root.append(content);
   const listeners = new AbortController();
@@ -150,7 +154,7 @@ export function createAnswerExchangeView(dependencies: Dependencies): WorkspaceV
     copyAnswers.disabled = !currentQuestions() || !state.rows.some(row => canExportQuestion(row.target.question));
     copyBank.disabled = !ready;
     input.disabled = file.disabled = !ready;
-    parse.disabled = !ready || !input.value.trim();
+    parseFill.disabled = parse.disabled = !ready || !input.value.trim();
     match.disabled = !currentQuestions();
     clear.disabled = !ready || count === 0;
     confirmClear.disabled = cancelClear.disabled = !ready;
@@ -199,14 +203,39 @@ export function createAnswerExchangeView(dependencies: Dependencies): WorkspaceV
     return { answers, entries, source, identity, stored: source === 'local-bank', rows: details,
       summary: `${source === 'local-bank' ? '本地题库' : '导入题库'} ${entries.length} 条；当前 ${state.rows.length} 题，可填写 ${answers.length} 题，冲突 ${conflicts} 题${readOnly ? `，只读 ${readOnly} 题` : ''}。${state.rows.length ? '请核对后填写。' : '可先展开核对全部条目，确认存入后再读取页面题目。'}` };
   }
-  function parseInput(): void {
+  function applyPreview(): void {
+    if (!currentQuestions() || !pending?.answers.length || pending.identity !== identity
+        || !dependencies.controller.applyImportedAnswers) {
+      tell('没有找到可填入的当前题目答案，请仅解析预览后逐题核对。');
+      return;
+    }
+    const selected = pending;
+    const current = ++revision;
+    busy = true;
+    tell(`正在填入 ${selected.answers.length} 道已匹配答案…`);
+    render();
+    void dependencies.controller.applyImportedAnswers(structuredClone(selected.answers), selected.source).then(() => {
+      if (!disposed && current === revision) tell('已自动填入匹配答案，请检查页面后手动提交；已有答案保留。');
+    }).catch(error => {
+      if (current === revision) tell(error instanceof Error ? error.message : '填写失败，请重新核对题目。', true);
+    }).finally(() => {
+      if (current === revision) {
+        busy = false;
+        render();
+      }
+    });
+  }
+  function parseInput(autoFill: boolean): void {
     if (!available()) return;
     ++revision;
     resetPreview();
     confirmation.hidden = true;
     try {
       const pack = parseExchangePack(input.value);
-      if (pack.mode === 'bank') showPreview(bankPreview(pack.items, 'import'));
+      if (pack.mode === 'bank') {
+        showPreview(bankPreview(pack.items, 'import'));
+        tell('已解析题库并预览，尚未保存。');
+      }
       else {
         if (!batch || state.previewStale) throw new Error('请先复制当前题目提示词，再导入同一批题目的答案。');
         const resolvedAnswers = resolveAnswerPack(pack, batch);
@@ -223,8 +252,12 @@ export function createAnswerExchangeView(dependencies: Dependencies): WorkspaceV
         const readOnly = resolvedAnswers.length - answers.length;
         showPreview({ answers, entries, source: 'import', identity, stored: false, rows: details,
           summary: `本批 ${batch.items.length} 题，可填写 ${answers.length} 题，未作答 ${batch.items.length - resolvedAnswers.length} 题${readOnly ? `，只读 ${readOnly} 题` : ''}。请核对后填写或存入题库。` });
+        if (autoFill) {
+          applyPreview();
+          return;
+        }
+        tell('已解析并预览，尚未填写或保存。');
       }
-      tell('已解析并预览，尚未填写或保存。');
     } catch (error) { tell(error instanceof Error ? error.message : '无法解析导入内容，请检查 JSON 格式。', true); }
     render();
   }
@@ -238,7 +271,7 @@ export function createAnswerExchangeView(dependencies: Dependencies): WorkspaceV
         batch = createAnswerBatch(state.rows.map(row => row.target));
         text = buildAnswerPrompt(batch);
         const skipped = state.rows.length - batch.items.length;
-        copiedMessage = `已复制 ${batch.items.length} 题的提示词${skipped ? `；已跳过 ${skipped} 道图片、缺字或暂不支持的题目` : ''}。请导回本批 AI 答案。`;
+        copiedMessage = `已复制当前 ${batch.items.length} 道完整题目及答题提示词${skipped ? `；已跳过 ${skipped} 道图片、缺字或暂不支持的题目` : ''}。请把 AI 返回的 JSON 粘贴回来。`;
         resetPreview();
       } else {
         text = buildBankPrompt();
@@ -284,7 +317,8 @@ export function createAnswerExchangeView(dependencies: Dependencies): WorkspaceV
   copyAnswers.addEventListener('click', () => { void copyPrompt(true); }, { signal });
   copyBank.addEventListener('click', () => { void copyPrompt(false); }, { signal });
   input.addEventListener('input', () => { if (busy) return; ++revision; resetPreview(); confirmation.hidden = true; status.textContent = ''; render(); }, { signal });
-  parse.addEventListener('click', parseInput, { signal });
+  parse.addEventListener('click', () => { parseInput(false); }, { signal });
+  parseFill.addEventListener('click', () => { parseInput(true); }, { signal });
   file.addEventListener('change', () => {
     const selected = file.files?.[0];
     if (!available() || !selected) return;
@@ -299,24 +333,14 @@ export function createAnswerExchangeView(dependencies: Dependencies): WorkspaceV
         if (disposed || current !== revision) return;
         input.value = text;
         busy = false;
-        parseInput();
+        parseInput(false);
       } catch (error) { if (current === revision) tell(error instanceof Error ? error.message : '文件读取失败，请重试。', true); }
       finally { if (current === revision) { busy = false; render(); } file.value = ''; }
     })();
   }, { signal });
   match.addEventListener('click', () => { void loadBank(true); }, { signal });
   root.addEventListener('toggle', () => { if (root.open && count === undefined) void loadBank(false); }, { signal });
-  apply.addEventListener('click', () => {
-    if (!currentQuestions() || !pending?.answers.length || pending.identity !== identity || !dependencies.controller.applyImportedAnswers) return;
-    const selected = pending;
-    const current = ++revision;
-    busy = true;
-    render();
-    void dependencies.controller.applyImportedAnswers(structuredClone(selected.answers), selected.source).then(() => {
-      if (!disposed && current === revision) tell('本轮填写已结束，请查看逐题结果；已有答案保留，未自动保存或提交。');
-    }).catch(error => { if (current === revision) tell(error instanceof Error ? error.message : '填写失败，请重新核对题目。', true); })
-      .finally(() => { if (current === revision) { busy = false; render(); } });
-  }, { signal });
+  apply.addEventListener('click', applyPreview, { signal });
   store.addEventListener('click', () => {
     if (!available() || !pending?.entries.length || pending.stored) return;
     const selected = pending;

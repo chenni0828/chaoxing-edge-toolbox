@@ -17,6 +17,8 @@ export interface UiPreferences {
   x: number;
   y: number;
   minimized: boolean;
+  /** Missing in older v2 records; false keeps the regular toolbar visible. */
+  hidden?: boolean;
 }
 
 export function defaultUiPreferences(): UiPreferences {
@@ -31,6 +33,7 @@ export function normalizeUiPreferences(value: unknown): UiPreferences {
     if (typeof input[key] === 'number' && Number.isFinite(input[key])) result[key] = Math.max(0, Math.min(1, input[key]));
   }
   if (typeof input.minimized === 'boolean') result.minimized = input.minimized;
+  if (typeof input.hidden === 'boolean') result.hidden = input.hidden;
   return result;
 }
 
@@ -42,7 +45,8 @@ export interface LegacyUiPreferences {
 }
 
 export function normalizeLegacyUiPreferences(value: unknown): LegacyUiPreferences {
-  return { ...normalizeUiPreferences(value), version: 1 };
+  const { x, y, minimized } = normalizeUiPreferences(value);
+  return { version: 1, x, y, minimized };
 }
 
 export interface UiSnapshot {
@@ -58,6 +62,7 @@ export interface UiSnapshot {
 export interface UiPreferencePatch {
   position?: { x: number; y: number };
   minimized?: boolean;
+  hidden?: boolean;
 }
 
 export interface UiUpdate {
@@ -98,6 +103,7 @@ export function isUiSnapshot(value: unknown): value is UiSnapshot {
   if (!isRecord(value) || !isRecord(value.preferences)) return false;
   const preferences = value.preferences;
   if (preferences.version !== 2 || typeof preferences.minimized !== 'boolean'
+      || (preferences.hidden !== undefined && typeof preferences.hidden !== 'boolean')
       || !isCoordinate(preferences.x) || !isCoordinate(preferences.y)
       || preferences.x < 0 || preferences.x > 1 || preferences.y < 0 || preferences.y > 1) return false;
   return isRevision(value.revision) && isRevision(value.resetRevision) && value.resetRevision <= value.revision
@@ -130,7 +136,7 @@ function validateUpdate(value: unknown, allowReset: boolean): UiUpdate {
   if (value.reset !== undefined) {
     if (!allowReset || (value.reset !== 'position' && value.reset !== 'all')
         || (value.patch !== undefined && (value.reset !== 'position' || !isRecord(value.patch)
-          || value.patch.minimized !== undefined || value.patch.position === undefined))) {
+          || value.patch.minimized !== undefined || value.patch.hidden !== undefined || value.patch.position === undefined))) {
       throw new Error('无效的悬浮框复位操作。');
     }
     const position = isRecord(value.patch) ? readPosition(value.patch.position) : undefined;
@@ -148,7 +154,11 @@ function validateUpdate(value: unknown, allowReset: boolean): UiUpdate {
     if (typeof patch.minimized !== 'boolean') throw new Error('无效的悬浮框显示状态。');
     next.minimized = patch.minimized;
   }
-  if (!next.position && next.minimized === undefined) throw new Error('悬浮框操作没有可保存的设置。');
+  if (patch.hidden !== undefined) {
+    if (typeof patch.hidden !== 'boolean') throw new Error('无效的悬浮框隐藏状态。');
+    next.hidden = patch.hidden;
+  }
+  if (!next.position && next.minimized === undefined && next.hidden === undefined) throw new Error('悬浮框操作没有可保存的设置。');
   return { sourceId: value.sourceId, operationId: value.operationId, baseRevision: value.baseRevision, patch: next };
 }
 
@@ -191,6 +201,7 @@ export function createUiPreferenceStore(storage: UiPreferenceStorage) {
       } else if (operation.patch) {
         if (operation.patch.position) Object.assign(preferences, operation.patch.position);
         if (operation.patch.minimized !== undefined) preferences.minimized = operation.patch.minimized;
+        if (operation.patch.hidden !== undefined) preferences.hidden = operation.patch.hidden;
       }
       const revision = current.revision + 1;
       if (!Number.isSafeInteger(revision)) throw new Error('悬浮框设置版本超出范围。');

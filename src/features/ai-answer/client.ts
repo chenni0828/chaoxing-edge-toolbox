@@ -2,13 +2,14 @@ import { AI_GENERATION_PORT } from '../api-settings/types';
 import type { CurrentQuestion } from './types';
 
 /** The content side never receives a key, model endpoint or arbitrary-fetch capability. */
-export function generateAnswer(question: CurrentQuestion, signal: AbortSignal, onProgress: (text: string) => void): Promise<string> {
+export function generateAnswer(question: CurrentQuestion, signal: AbortSignal, onProgress: (text: string) => void, onStatus: (text: string) => void = () => {}): Promise<string> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) { reject(new Error('已取消生成。')); return; }
     let port: chrome.runtime.Port;
     let settled = false;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
-    const timeout = setTimeout(() => finish(undefined, '模型请求超时，请手动重试。'), 100000);
+    let timeout = setTimeout(() => finish(undefined, '模型连接超时，请手动重试。'), 45000);
+    const touch = () => { clearTimeout(timeout); timeout = setTimeout(() => finish(undefined, '模型连接超时，请手动重试。'), 45000); };
     function finish(text?: string, error?: string): void {
       if (settled) return;
       settled = true;
@@ -25,7 +26,9 @@ export function generateAnswer(question: CurrentQuestion, signal: AbortSignal, o
       port = chrome.runtime.connect({ name: AI_GENERATION_PORT });
       port.onMessage.addListener((message: { type?: string; text?: string; error?: string }) => {
         if (settled) return;
+        touch();
         if (message.type === 'progress' && typeof message.text === 'string') onProgress(message.text);
+        else if (message.type === 'status' && typeof message.text === 'string') onStatus(message.text);
         else if (message.type === 'result' && typeof message.text === 'string') finish(message.text);
         else if (message.type === 'error') finish(undefined, message.error ?? '模型生成失败，请手动重试。');
       });

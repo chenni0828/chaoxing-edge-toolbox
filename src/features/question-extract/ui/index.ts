@@ -15,12 +15,14 @@ export interface QuestionExtractView {
 }
 
 type QuestionDraft = { question: ExtractedQuestion; text: string };
+let nextViewId = 0;
 
 /** Extraction owns its transient drafts; the toolbox shell owns navigation and positioning. */
 export function createQuestionExtractView(dependencies: QuestionExtractViewDependencies): QuestionExtractView {
   const listeners = new AbortController();
   const { signal } = listeners;
   const root = document.createElement('section');
+  const viewId = `cx-question-extract-${++nextViewId}`;
   root.className = 'feature-view';
   root.setAttribute('aria-label', '题目提取');
   root.innerHTML = `
@@ -30,8 +32,8 @@ export function createQuestionExtractView(dependencies: QuestionExtractViewDepen
     <div class="results" hidden>
       <p class="summary"></p><nav class="question-list" aria-label="选择题目"></nav>
       <div class="navigation"><button class="button" data-action="previous" type="button">← 上一题</button><span class="counter" aria-live="polite"></span><button class="button" data-action="next" type="button">下一题 →</button></div>
-      <label class="editor-label" for="cx-question-markdown">本题预览 · Markdown</label><textarea class="editor" id="cx-question-markdown" spellcheck="false" aria-describedby="cx-extract-hint"></textarea>
-      <p class="editor-hint" id="cx-extract-hint">可直接修改；切换题目会保留编辑，复制全部也会采用编辑内容。</p>
+      <label class="editor-label" for="${viewId}-markdown">本题预览 · Markdown</label><textarea class="editor" id="${viewId}-markdown" spellcheck="false" aria-describedby="${viewId}-hint"></textarea>
+      <p class="editor-hint" id="${viewId}-hint">可直接修改；切换题目会保留编辑，复制全部也会采用编辑内容。</p>
       <div class="copy-actions"><button class="button primary" data-action="copy-one" type="button">复制本题</button><button class="button" data-action="copy-all" type="button">复制全部</button></div>
     </div>
     <p class="warnings" hidden></p><p class="message" role="status" aria-live="polite" aria-atomic="true" hidden></p><textarea class="manual-copy" aria-label="手动复制全部题目：按 Ctrl+C" readonly hidden></textarea>

@@ -79,7 +79,7 @@ function localJobId(win: StudyPageWindow): string {
 function titleFor(property: Metadata | undefined, type: StudyTaskType): string {
   const fallback: Record<StudyTaskType, string> = {
     video: '音视频', courseware: '课件 / 书籍', 'audio-ppt': '带音频 PPT', book: '长时阅读',
-    hyperlink: '链接阅读', 'chapter-test': '章节测验（暂不处理）',
+    hyperlink: '链接阅读', 'chapter-test': '章节测验',
   };
   const title = property?.name ?? property?.title ?? property?.bookname;
   return typeof title === 'string' && title.trim() ? title.trim().slice(0, 300) : fallback[type];

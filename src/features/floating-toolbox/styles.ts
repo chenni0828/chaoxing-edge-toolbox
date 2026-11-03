@@ -44,6 +44,12 @@ svg { display: block; flex: 0 0 auto; }
 .icon-button:hover:not(:disabled) { background: var(--tint-bg); color: var(--primary); }
 .icon-button:active:not(:disabled) { background: var(--tint-bg-strong); }
 .header .icon-button { width: 24px; height: 24px; }
+.floating-dot { display: none; }
+:host([data-hidden="true"]) .panel { width: 100%; height: ${TOOLBOX_LAYOUT.dotTargetSize}px; max-height: none; overflow: visible; background: transparent; border-radius: 50%; box-shadow: none; }
+:host([data-hidden="true"]) .header, :host([data-hidden="true"]) .drawer { display: none; }
+:host([data-hidden="true"]) .floating-dot { display: grid; place-items: center; width: 100%; height: ${TOOLBOX_LAYOUT.dotTargetSize}px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--primary); touch-action: none; cursor: move; }
+.floating-dot > span { display: block; width: ${TOOLBOX_LAYOUT.dotVisualSize}px; height: ${TOOLBOX_LAYOUT.dotVisualSize}px; border: 1px solid var(--primary-hover); border-radius: 50%; background: var(--primary); box-shadow: 0 1px 4px #0f172a25; pointer-events: none; }
+.floating-dot:hover > span { background: var(--primary-hover); }
 .drawer { position: relative; flex: 1 1 auto; min-height: 0; z-index: 1; display: flex; flex-direction: column; width: 100%; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-top: 0; border-radius: 0 0 var(--radius-lg) var(--radius-lg); transform-origin: top center; }
 .body { flex: 1 1 auto; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 10px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .mini { min-height: 0; overflow: auto; overscroll-behavior: contain; }

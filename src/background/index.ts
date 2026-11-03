@@ -6,14 +6,16 @@ import { extractFromTab } from '../features/question-extract/client';
 import { settingsRoutes, subscribeStoredSettings } from '../features/toolbox-settings/background';
 import { COLLECT_QUESTIONS, OPEN_SETTINGS } from '../shared/messages';
 import { studyRoutes, installStudyBroker } from '../features/chapter-study/background';
+import { studyNotificationRoutes, installStudyNotifications } from '../features/chapter-study/notifications';
 import { zjoocStudyRoutes, installZjoocStudyBackground } from '../features/zjooc-study/background';
 import { updateCheckRoutes } from '../features/update-check/background';
 import { questionBankRoutes, subscribeStoredQuestionBank } from '../features/question-bank/background';
-import { localQuestionBankRoutes } from '../features/local-question-bank/background';
-import { pacingRoutes, subscribeStoredPacing } from '../features/answer-pacing/background';
-import { answerSourceRoutes, subscribeStoredAnswerSource } from '../features/question-answer/source-background';
 import { installQuestionAnswerBroker } from '../features/question-answer/background';
 import { installQuestionGenerationBroker } from '../features/question-answer/generation-background';
+import { answerSourceRoutes, subscribeStoredAnswerSource } from '../features/question-answer/source-background';
+import { configBackupRoutes } from '../features/config-backup/background';
+import { pacingRoutes, subscribeStoredPacing } from '../features/answer-pacing/background';
+import { localQuestionBankRoutes } from '../features/local-question-bank/background';
 
 async function showSettings(section: unknown): Promise<void> {
   const view = section === 'api' || section === 'floating' || section === 'question-bank' ? section : 'features';
@@ -31,10 +33,12 @@ const routes: BackgroundRoutes = {
   ...apiSettingsRoutes,
   ...questionBankRoutes,
   ...localQuestionBankRoutes,
+  ...configBackupRoutes,
   ...pacingRoutes,
   ...answerSourceRoutes,
   ...uiRoutes,
   ...studyRoutes,
+  ...studyNotificationRoutes,
   ...zjoocStudyRoutes,
   ...updateCheckRoutes,
   [COLLECT_QUESTIONS]: { access: 'top-page', platforms: ['chaoxing'], handle: async (_message, sender) => extractFromTab(sender.tab!.id!) },
@@ -63,4 +67,5 @@ installAiGenerationBroker();
 installQuestionAnswerBroker();
 installQuestionGenerationBroker();
 installStudyBroker();
+installStudyNotifications();
 installZjoocStudyBackground();

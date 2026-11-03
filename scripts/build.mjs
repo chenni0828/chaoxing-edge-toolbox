@@ -22,6 +22,7 @@ export const manifest = {
   description: '学习通与浙学学习工具箱：按网站提供页面工具、题目辅助和章节学习。',
   minimum_chrome_version: '119',
   permissions: ['storage', 'clipboardWrite'],
+  optional_permissions: ['notifications'],
   host_permissions: [...SITE_MATCHES, `${UPDATE_API_ORIGIN}/*`],
   optional_host_permissions: ['https://*/*'],
   background: { service_worker: 'background/index.js' },

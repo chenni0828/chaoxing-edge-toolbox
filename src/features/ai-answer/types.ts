@@ -58,5 +58,6 @@ export interface AiControllerDependencies {
   apiConfigured(): Promise<boolean>;
   readAnswer(): Promise<AnswerSnapshot>;
   writeAnswer(request: AnswerWriteRequest): Promise<AnswerWriteResult>;
-  generate(question: CurrentQuestion, signal: AbortSignal, onProgress: (text: string) => void): Promise<string>;
+  generate(question: CurrentQuestion, signal: AbortSignal, onProgress: (text: string) => void, onStatus?: (text: string) => void): Promise<string>;
+  waitBeforeFill?: import('../answer-pacing/scheduler').PacingWait;
 }

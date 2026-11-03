@@ -30,3 +30,8 @@ export interface FrameExtraction {
   questions: ExtractedQuestion[];
   error?: string;
 }
+
+export interface FrameExtractionPending {
+  type: 'toolbox:frame-pending';
+  frameKey: string;
+}

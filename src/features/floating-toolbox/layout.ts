@@ -6,4 +6,6 @@ export const TOOLBOX_LAYOUT = {
   headerHeight: 30,
   compactToolsHeight: 36,
   viewportMargin: 12,
+  dotTargetSize: 24,
+  dotVisualSize: 10,
 } as const;

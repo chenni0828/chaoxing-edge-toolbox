@@ -266,6 +266,41 @@ function chapterFormCensus(doc: Document, entries: QuestionEntry[]): boolean {
   return counted === entries.length;
 }
 
+/** Standalone homework/exam pages must declare the same paper size three independent ways. */
+function homeworkExamCensus(doc: Document, entries: QuestionEntry[], paginated: boolean): boolean {
+  if (paginated) return false;
+  const containers = doc.querySelectorAll('#fanyaMarking');
+  if (containers.length !== 1 || !entries.length) return false;
+  const container = containers[0];
+  if (!visible(container)) return false;
+  const totalNodes = Array.from(container.querySelectorAll('.mark_info'));
+  if (totalNodes.some(node => !visible(node))) return false;
+  const totals = totalNodes
+    .flatMap(node => Array.from(normalizeText(node.textContent ?? '').matchAll(/题量\s*[:：]\s*(\d+)/g)))
+    .map(match => Number(match[1]));
+  if (totals.length !== 1 || totals[0] !== entries.length) return false;
+
+  const questionNodes = Array.from(container.querySelectorAll<HTMLElement>('.questionLi'));
+  if (questionNodes.length !== entries.length || questionNodes.some(node => !visible(node))) return false;
+  if (new Set(entries.map(entry => entry.sourceId)).size !== entries.length) return false;
+  if (entries.some((entry, index) => entry.root !== questionNodes[index]
+      || entry.root.parentElement?.closest('.questionLi')
+      || entry.root.closest('#fanyaMarking') !== container)) return false;
+
+  const headings = Array.from(container.querySelectorAll<HTMLElement>('.type_tit'));
+  if (!headings.length || headings.some(heading => !visible(heading))) return false;
+  let counted = 0;
+  for (const [index, heading] of headings.entries()) {
+    const match = /共\s*(\d+)\s*题/.exec(normalizeText(heading.textContent ?? ''));
+    if (!match) return false;
+    const group = questionNodes.filter(node => Boolean(heading.compareDocumentPosition(node) & 4)
+      && (!headings[index + 1] || Boolean(node.compareDocumentPosition(headings[index + 1]) & 4)));
+    if (group.length !== Number(match[1])) return false;
+    counted += group.length;
+  }
+  return counted === totals[0];
+}
+
 /** This is an observed frame, never a traversal into arbitrary parent/editor documents. */
 export function inspectQuestionPage(win: Window): PageInspection {
   const doc = win.document;
@@ -290,8 +325,14 @@ export function inspectQuestionPage(win: Window): PageInspection {
   const declared = censusValues.length === 1 ? censusValues[0].split(/[,，\s]+/).filter(Boolean) : [];
   const idCensus = entries.length > 0 && declared.length === entries.length && new Set(declared).size === declared.length
     && entries.every(entry => declared.includes(entry.sourceId));
-  const paginated = Boolean(doc.querySelector('[onclick*="getTheNextQuestion"],.pagination,[rel=next],[rel=prev],input[name=pageNum],input[name=currentPage]'));
-  const allLoaded = !paginated && (idCensus || (chapter && !censusValues.length && chapterFormCensus(doc, entries)));
+  const paginated = Boolean(doc.querySelector([
+    '[onclick*="getTheNextQuestion"]', '[onclick*="nextQuestion"]',
+    '.pagination', '.pager', '.layui-laypage', '[class~="pagination"]', '[class~="pager"]',
+    '[rel=next]', '[rel=prev]', 'input[name=pageNum]', 'input[name=currentPage]',
+  ].join(',')));
+  const allLoaded = !paginated && (idCensus
+    || (chapter && !censusValues.length && chapterFormCensus(doc, entries))
+    || (['homework', 'exam'].includes(scene) && homeworkExamCensus(doc, entries, paginated)));
   const complete = pageComplete(doc);
   const actionReady = scene === 'chapter-test' && Boolean(doc.querySelector('.testTit_status')) && !complete && entries.length > 0;
   return { entries, snapshot: { documentKey, scopeKey, scene, questions: entries.map(entry => entry.snapshot), complete, allLoaded,

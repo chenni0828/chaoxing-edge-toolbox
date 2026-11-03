@@ -1,10 +1,11 @@
 import { isThinkLadderUrl } from '../features/ai-answer/adapters/think-ladder';
+import { isChapterStudyUrl } from '../features/chapter-study/adapters/chapter';
 import { isPlatformUrl } from '../shared/sites';
 
-export type PageContext = 'homework' | 'exam' | 'think-ladder' | 'generic';
+export type PageContext = 'chapter' | 'homework' | 'exam' | 'think-ladder' | 'generic';
 
-const PAGE_MARKERS = '#fanyaMarking, #submitForm, #realApp, #chatScroll, .questionLi, input[name="workAnswerId"], iframe';
-const PAGE_IDS = new Set(['fanyaMarking', 'submitForm', 'realApp', 'chatScroll']);
+const PAGE_MARKERS = '#coursetree, #fanyaMarking, #submitForm, #realApp, #chatScroll, .questionLi, input[name="workAnswerId"], iframe';
+const PAGE_IDS = new Set(['coursetree', 'fanyaMarking', 'submitForm', 'realApp', 'chatScroll']);
 
 function isEditorContent(element: Element): boolean {
   return Boolean(element.closest('.edui-editor-iframeholder'));
@@ -48,6 +49,14 @@ export function isExamUrl(value: string): boolean {
   catch { return false; }
 }
 
+export function pageContextFromUrl(value: string): PageContext {
+  if (isChapterStudyUrl(value)) return 'chapter';
+  if (isThinkLadderUrl(value)) return 'think-ladder';
+  if (isExamUrl(value)) return 'exam';
+  if (isHomeworkUrl(value)) return 'homework';
+  return 'generic';
+}
+
 /** Known work routes and work-specific markup, including accessible embedded pages. */
 export function readPageContext(doc: Document): PageContext {
   const visited = new Set<Document>();
@@ -55,12 +64,13 @@ export function readPageContext(doc: Document): PageContext {
     if (visited.has(current) || depth > 3) return 'generic';
     visited.add(current);
     const href = current.location?.href ?? current.URL;
-    if (isThinkLadderUrl(href)) return 'think-ladder';
-    if (isExamUrl(href)) return 'exam';
-    if (isHomeworkUrl(href)) return 'homework';
-    if (current.querySelector('#fanyaMarking .questionLi, #submitForm input[name="workAnswerId"]')) return 'homework';
+    const route = pageContextFromUrl(href);
+    if (route !== 'generic') return route;
+    // The chapter shell owns embedded work routes, including its chapter quiz.
+    if (current.querySelector('#coursetree') && current.querySelector('iframe#iframe')) return 'chapter';
     const workForm = current.querySelector<HTMLFormElement>('form#submitForm');
     if (workForm && isExamUrl(workForm.action)) return 'exam';
+    if (current.querySelector('#fanyaMarking .questionLi, #submitForm input[name="workAnswerId"]')) return 'homework';
     if (workForm && isHomeworkUrl(workForm.action)) return 'homework';
     for (const frame of current.querySelectorAll<HTMLIFrameElement>('iframe')) {
       if (isEditorContent(frame)) continue;
@@ -68,9 +78,8 @@ export function readPageContext(doc: Document): PageContext {
       if (src) {
         try {
           const url = new URL(src, current.baseURI).href;
-          if (isThinkLadderUrl(url)) return 'think-ladder';
-          if (isExamUrl(url)) return 'exam';
-          if (isHomeworkUrl(url)) return 'homework';
+          const frameRoute = pageContextFromUrl(url);
+          if (frameRoute !== 'generic') return frameRoute;
         } catch { /* An unloaded or malformed frame is not a page classification. */ }
       }
       try {
@@ -86,7 +95,7 @@ export function readPageContext(doc: Document): PageContext {
 }
 
 export function pageToolsTitle(context: PageContext): string {
-  return context === 'homework' ? '作业' : context === 'exam' ? '考试' : context === 'think-ladder' ? '思维阶梯' : '页面工具';
+  return context === 'chapter' ? '章节学习' : context === 'exam' ? '考试' : context === 'homework' ? '作业' : context === 'think-ladder' ? '思维阶梯' : '页面工具';
 }
 
 /** Reclassify late page/frame content; callers decide whether navigation may change. */

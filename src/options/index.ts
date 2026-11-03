@@ -3,9 +3,11 @@ import { mountAppearanceSettings } from '../features/floating-toolbox/appearance
 import { mountToolboxSettings } from '../features/toolbox-settings/ui';
 import { mountUpdateCheck } from '../features/update-check/ui';
 import { icon } from '../features/floating-toolbox/icons';
+import { mountStudyNotificationSettings } from '../features/chapter-study/notification-settings';
 import { mountQuestionBankSettings } from '../features/question-bank/ui';
-import { mountPacingSettings } from '../features/answer-pacing/ui';
 import type { SettingsSection } from '../platform/settings-navigation';
+import { mountConfigBackup } from '../features/config-backup/ui';
+import { mountPacingSettings } from '../features/answer-pacing/ui';
 
 const sections = ['api', 'question-bank', 'features', 'floating'] as const;
 const cleanups: Array<() => void> = [];
@@ -16,10 +18,19 @@ if (version) version.textContent = `v${chrome.runtime.getManifest().version}`;
 const updateRoot = document.getElementById('settings-update');
 if (updateRoot) cleanups.push(mountUpdateCheck(updateRoot));
 
-const apiRoot = document.getElementById('settings-api');
+let disposeApi: (() => void) | undefined;
+let disposeBank: (() => void) | undefined;
+const apiRoot = document.getElementById('settings-api-form');
 const bankRoot = document.getElementById('settings-question-bank');
-if (apiRoot) cleanups.push(mountApiSettings(apiRoot));
-if (bankRoot) cleanups.push(mountQuestionBankSettings(bankRoot));
+function refreshCredentialForms(): void {
+  disposeApi?.(); disposeBank?.();
+  if (apiRoot) disposeApi = mountApiSettings(apiRoot);
+  if (bankRoot) disposeBank = mountQuestionBankSettings(bankRoot);
+}
+refreshCredentialForms();
+cleanups.push(() => { disposeApi?.(); disposeBank?.(); });
+const backupRoot = document.getElementById('settings-config-backup');
+if (backupRoot) cleanups.push(mountConfigBackup(backupRoot, refreshCredentialForms));
 
 for (const [id, mount] of [
   ['features', mountToolboxSettings],
@@ -30,6 +41,7 @@ for (const [id, mount] of [
 }
 const featureSettings = document.getElementById('settings-features');
 if (featureSettings) {
+  cleanups.push(mountStudyNotificationSettings(featureSettings));
   const pacingRoot = document.createElement('div');
   featureSettings.append(pacingRoot);
   cleanups.push(mountPacingSettings(pacingRoot));

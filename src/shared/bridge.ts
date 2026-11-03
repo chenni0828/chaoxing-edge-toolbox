@@ -1,8 +1,8 @@
 import { isFeatureId, type FeatureId } from '../features/catalog';
 import type { Settings } from './settings';
 import type { AnswerSnapshot, AnswerWriteRequest, AnswerWriteResult, CurrentQuestion } from '../features/ai-answer/types';
-import type { StudyPageRequest, StudyPageResult } from '../features/chapter-study/types';
-import { isStudyPageRequest, isStudyPageResult } from '../features/chapter-study/protocol';
+import type { StudyPageRequest, StudyPageResult, StudyTaskProgress } from '../features/chapter-study/types';
+import { isStudyPageRequest, isStudyPageResult, isStudyProgress } from '../features/chapter-study/protocol';
 import type { AnswerPageCommand, AnswerPageResult } from '../features/question-answer/types';
 import { isAnswerPageCommand, isAnswerPageResult } from '../features/question-answer/protocol';
 
@@ -17,6 +17,7 @@ export type BridgeMessage =
   | { channel: typeof CHANNEL; kind: 'answer-command'; requestId: string; command: AnswerPageCommand }
   | { channel: typeof CHANNEL; kind: 'answer-result'; requestId: string; result: AnswerPageResult }
   | { channel: typeof CHANNEL; kind: 'study-command'; requestId: string; request: StudyPageRequest }
+  | { channel: typeof CHANNEL; kind: 'study-progress'; requestId: string; progress: StudyTaskProgress }
   | { channel: typeof CHANNEL; kind: 'study-result'; requestId: string; result: StudyPageResult };
 
 export interface PageBridge {
@@ -75,6 +76,7 @@ export function parseBridgeData(data: unknown): BridgeMessage | null {
     if (value.kind === 'answer-result' && isAnswerPageResult(value.result)) return value as unknown as BridgeMessage;
     if (value.kind === 'study-command' && isStudyPageRequest(value.request)) return value as unknown as BridgeMessage;
     if (value.kind === 'study-result' && isStudyPageResult(value.result)) return value as unknown as BridgeMessage;
+    if (value.kind === 'study-progress' && isStudyProgress(value.progress)) return value as unknown as BridgeMessage;
     if (value.kind === 'editor-read') return value as unknown as BridgeMessage;
     if (value.kind === 'editor-write') {
       const request = value.request as Partial<AnswerWriteRequest> | undefined;

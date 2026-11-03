@@ -1,10 +1,10 @@
 import { observeChapterPage, readChapterPage, type ChapterPageSnapshot } from './adapters/chapter';
 import {
   defaultStudyPreferences, normalizeStudyPreferences,
-  type StudyController, type StudyPreferences, type StudyRuntime, type StudySession, type StudyState, type StudyTarget, type StudyTaskOutcome,
+  type StudyController, type StudyPreferences, type StudyRuntime, type StudySession, type StudyState, type StudyTarget, type StudyTaskOutcome, type StudyNotice,
 } from './types';
 
-export interface ChapterTestHandlerContext { runId: string; signal: AbortSignal; preferences: StudyPreferences }
+export interface ChapterTestHandlerContext { runId: string; signal: AbortSignal; preferences: StudyPreferences; startedByUser: boolean }
 export type ChapterTestHandler = (target: StudyTarget, context: ChapterTestHandlerContext) => Promise<StudyTaskOutcome>;
 export interface StudyDependencies {
   document: Document;
@@ -57,6 +57,7 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
   let resumeCurrent = false;
   let freshStart = false;
   let locallyPaused = false;
+  let userStartRequested = false;
 
   function emit(update: Partial<StudyState>): void {
     if (disposed) return;
@@ -65,6 +66,12 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
   }
 
   function getState(): StudyState { return { ...state, preferences: { ...state.preferences }, skipped: [...state.skipped] }; }
+
+  function notice(runId: string, kind: StudyNotice['kind'], eventId = '', message = ''): void {
+    void runtime.notify?.({ runId, kind, eventId, message: message.slice(0, 500) }).catch(() => undefined);
+  }
+
+  function clearNotice(): void { if (session) notice(session.runId, 'clear'); }
 
   function persist(): Promise<void> {
     if (!session) return Promise.resolve();
@@ -79,6 +86,7 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
     worker = undefined;
     previous.abort.abort();
     runtime.cancel(previous.runId);
+    notice(previous.runId, 'clear');
   }
 
   function assertCurrent(current: Worker, checkFrame = true): ChapterPageSnapshot {
@@ -131,6 +139,7 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
     session.expectedChapterId = chapterId;
     await persist();
     assertCurrent(current, false);
+    notice(current.runId, 'clear');
     const result = await runtime.page({ action: 'navigate', chapterId, runId: current.runId }, current.abort.signal);
     assertCurrent(current, false);
     if (!result.ok) throw new Attention(result.error || '无法切换章节，请手动切换后继续。');
@@ -147,6 +156,7 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
     let page = assertCurrent(current, false);
     if (page.activeCardIndex !== index) {
       current.stage = 'card';
+      notice(current.runId, 'clear');
       const result = await runtime.page({ action: 'card', cardIndex: index, runId: current.runId }, current.abort.signal);
       assertCurrent(current, false);
       if (!result.ok) throw new Attention(result.error || '无法切换章节卡片，请检查页面后继续。');
@@ -192,7 +202,7 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
         if (target.type === 'chapter-test') {
           current.stage = 'task';
           emit({ phase: 'running', running: true, message: '正在检查章节测验处理方式。', taskType: target.type });
-          const outcome = await handleChapterTest(target, { runId: current.runId, signal, preferences: { ...preferences } });
+          const outcome = await handleChapterTest(target, { runId: current.runId, signal, preferences: { ...preferences }, startedByUser: session?.startedByUser === true });
           assertCurrent(current);
           deadline = Date.now() + 15000;
           const live = await runtime.scan(signal);
@@ -204,6 +214,11 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
             recordSkip(`${title}：${target.title || '章节测验'}（需手动完成）`);
             emit({ message: '已记录章节测验，继续处理其他学习内容。', taskType: target.type });
           }
+          if (outcome.chapterIncomplete) {
+            skippedQuiz = true;
+            recordSkip(`${title}：${target.title || '章节测验'}（已保存、待提交）`);
+            emit({ message: outcome.message, taskType: target.type });
+          }
           done.add(targetIdentity(target));
           current.stage = 'scan';
           continue;
@@ -212,8 +227,24 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
         current.stage = 'task';
         emit({ phase: 'running', running: true,
           message: `正在学习：${target.title || title}${playerWarning ? `；${playerWarning}` : ''}`, taskType: target.type });
-        const outcome = await runtime.runTask(target, current.runId, { ...preferences }, signal);
+        let progressSequence = 0;
+        let waitingForVerification = false;
+        const outcome = await runtime.runTask(target, current.runId, { ...preferences }, signal, progress => {
+          if (progress.runId !== current.runId || progress.taskKey !== target.key || progress.documentKey !== target.documentKey
+            || progress.sequence <= progressSequence) return;
+          try { assertCurrent(current); } catch { return; }
+          progressSequence = progress.sequence;
+          emit({ phase: progress.phase === 'playing' ? 'running' : progress.phase, running: true, message: progress.message });
+          if (progress.phase === 'verification') {
+            waitingForVerification = true;
+            notice(current.runId, 'verification', `${target.documentKey}:${target.key}:${progress.sequence}`, progress.message);
+          } else if (waitingForVerification) {
+            waitingForVerification = false;
+            notice(current.runId, 'clear');
+          }
+        });
         assertCurrent(current);
+        if (waitingForVerification) notice(current.runId, 'clear');
         deadline = Date.now() + 15000;
         // A response from a replaced frame/document cannot complete its replacement.
         const live = await runtime.scan(signal);
@@ -229,6 +260,8 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
           // the chapter is not reported as complete and no green-check wait starts.
           skippedQuiz = true;
           recordSkip(`${title}：${target.title || '音视频'}（${outcome.message}）`);
+          emit({ message: outcome.message });
+          notice(current.runId, 'failure', `${target.documentKey}:${target.key}:failed`, outcome.message);
         }
         done.add(targetIdentity(target));
         current.stage = 'scan';
@@ -320,6 +353,7 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
       if (session) { session.paused = true; session.expectedChapterId = undefined; void persist().catch(() => {}); }
       emit({ phase: 'paused', running: false, taskType: undefined,
         message: error instanceof Error ? error.message : '章节学习遇到错误，已暂停。' });
+      notice(current.runId, 'failure', `paused:${current.chapterId}`, state.message);
     } finally {
       if (worker === current) worker = undefined;
     }
@@ -341,6 +375,7 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
       isNew = !restored;
       freshStart = false;
     }
+    if (userStartRequested) { session.startedByUser = true; userStartRequested = false; }
     if (explicitResume) { session.paused = false; session.finished = false; locallyPaused = false; explicitResume = false; }
     if (locallyPaused) session.paused = true;
     if (session.paused) { emit({ phase: 'paused', running: false, message: '章节学习已暂停，点击继续可恢复。', taskType: undefined }); return; }
@@ -406,7 +441,7 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
     return evaluate();
   }).catch(failedToInitialize);
 
-  const pagehide = () => { pageHidden = true; evaluation += 1; cancelWorker(); };
+  const pagehide = () => { pageHidden = true; evaluation += 1; cancelWorker(); clearNotice(); };
   const pageshow = (event: PageTransitionEvent) => {
     const restoring = pageHidden || event.persisted;
     pageHidden = false;
@@ -421,6 +456,8 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
     subscribe(listener) { listeners.add(listener); listener(getState()); return () => { listeners.delete(listener); }; },
     start() {
       if (disposed || !isEnabled()) return;
+      userStartRequested = true;
+      clearNotice();
       if (session && (session.finished || session.startMode !== preferences.startMode)) freshStart = true;
       locallyPaused = false;
       explicitResume = true;
@@ -433,13 +470,14 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
       locallyPaused = true;
       cancelWorker();
       if (session) { session.paused = true; session.expectedChapterId = undefined; void persist().catch(failedToInitialize); }
+      clearNotice();
       explicitResume = false;
       emit({ phase: isEnabled() ? 'paused' : 'disabled', running: false, message: '章节学习已暂停。', taskType: undefined });
     },
     settingsChanged() {
       const next = isEnabled();
       evaluation += 1;
-      if (!next) { cancelWorker(); emit({ phase: 'disabled', running: false, message: '章节学习已关闭。', taskType: undefined }); }
+      if (!next) { cancelWorker(); clearNotice(); emit({ phase: 'disabled', running: false, message: '章节学习已关闭。', taskType: undefined }); }
       else {
         if (!enabled) {
           explicitResume = true;
@@ -464,6 +502,7 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
       disposed = true;
       evaluation += 1;
       cancelWorker();
+      clearNotice();
       unobserve();
       unsubscribePreferences();
       doc.defaultView?.removeEventListener('pagehide', pagehide);

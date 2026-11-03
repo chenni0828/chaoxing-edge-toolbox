@@ -7,6 +7,7 @@ import { formatQuestionSnapshot, formatQuestionSnapshots } from '../question-ext
 import { canPreviewQuestions } from './permissions';
 import { createQuestionImages } from './question-images';
 import { createAnswerExchangeView } from '../answer-exchange/ui';
+import { isCompleteApplicableAnswer } from './review';
 
 interface QuestionAnswerViewDependencies {
   answer: QuestionAnswerController;
@@ -20,6 +21,7 @@ interface QuestionAnswerViewDependencies {
 interface AnswerRowView {
   element: HTMLLIElement; title: HTMLElement; phase: HTMLElement; stem: HTMLElement; message: HTMLElement;
   source: HTMLElement; tags: HTMLElement; preview: HTMLDetailsElement; text: HTMLElement; content: HTMLElement; current: HTMLElement; currentBlock: HTMLElement; contentKey: string; resultMode?: string;
+  review: HTMLElement; reviewHeading: HTMLElement; reviewSuggestionBlock: HTMLElement; reviewSuggestion: HTMLElement; reviewReason: HTMLElement;
   retry: HTMLButtonElement; replace: HTMLButtonElement; confirm: HTMLElement; confirmButton: HTMLButtonElement;
 }
 
@@ -142,9 +144,14 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
   copyFallback.hidden = true;
   configurationContent.append(controls, sourceStatus, boundary);
   configuration.append(configurationSummary, configurationContent);
-  root.append(heading, configuration, message, progressLine, completion, paperStatus, grid, rows, copyActions, copyStatus, copyFallback);
   const exchange = createAnswerExchangeView({ controller: dependencies.answer });
-  root.append(exchange.element);
+  const reviewActions = createElement('div', 'answer-review-actions');
+  const reviewButton = button('AI 整卷复检', 'review', true);
+  const reviewStatus = createElement('p', 'answer-review-status');
+  reviewStatus.setAttribute('role', 'status');
+  reviewStatus.setAttribute('aria-live', 'polite');
+  reviewActions.append(reviewButton, reviewStatus);
+  root.append(heading, configuration, exchange.element, reviewActions, message, progressLine, completion, paperStatus, grid, rows, copyActions, copyStatus, copyFallback);
 
   let settings: Settings | undefined;
   let saving = false;
@@ -227,6 +234,13 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
     const currentBlock = createElement('div', 'answer-current');
     const current = createElement('pre');
     currentBlock.append(createElement('span', 'answer-answer-label', '当前页面答案'), current);
+    const review = createElement('div', 'answer-review');
+    const reviewHeading = createElement('p', 'answer-review-heading');
+    const reviewSuggestionBlock = createElement('div', 'answer-review-suggestion');
+    const reviewSuggestion = createElement('pre');
+    reviewSuggestionBlock.append(createElement('span', 'answer-answer-label', 'AI 建议答案'), reviewSuggestion);
+    const reviewReason = createElement('p', 'answer-review-reason');
+    review.append(reviewHeading, reviewSuggestionBlock, reviewReason);
     const rowActions = createElement('div', 'answer-result-actions');
     const retry = button('重试本题', 'retry');
     const replace = button('重新生成并覆盖', 'replace');
@@ -237,7 +251,7 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
     const confirmButton = button('确认覆盖本题', 'confirm-replace');
     const cancelButton = button('取消', 'cancel-replace');
     confirm.append(createElement('p', '', '将重新获取答案并覆盖本题已有内容。'), confirmButton, cancelButton);
-    element.append(header, stem, content, currentBlock, rowMessage, metadata, preview, rowActions, confirm);
+    element.append(header, stem, content, currentBlock, review, rowMessage, metadata, preview, rowActions, confirm);
     retry.addEventListener('click', () => {
       const row = currentRow(id);
       if (!canAnswer() || !row || row.readOnly) return;
@@ -262,7 +276,11 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
       dependencies.answer.retry(id, true);
       render();
     }, { signal });
-    return { element, title, phase: rowPhase, stem, message: rowMessage, source: answerSource, tags, preview, text, content, current, currentBlock, contentKey: '', retry, replace, confirm, confirmButton };
+    return {
+      element, title, phase: rowPhase, stem, message: rowMessage, source: answerSource, tags, preview, text, content,
+      current, currentBlock, contentKey: '', review, reviewHeading, reviewSuggestionBlock, reviewSuggestion, reviewReason,
+      retry, replace, confirm, confirmButton,
+    };
   }
 
   function renderQuestionContent(view: AnswerRowView, question: QuestionSnapshot): void {
@@ -323,9 +341,13 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
       number.textContent = row.target.question.number;
       number.dataset.phase = row.phase;
       const rowLabel = rowPhaseLabel(row);
+      const reviewLabel = row.review?.status === 'suspect' ? 'AI 疑似错误'
+        : row.review?.status === 'uncertain' ? 'AI 需人工确认' : '';
+      if (row.review) number.dataset.review = row.review.status;
+      else delete number.dataset.review;
       number.setAttribute('aria-pressed', String(row.id === selectedId));
-      number.setAttribute('aria-label', `第 ${row.target.question.number} 题，${rowLabel}`);
-      number.title = `第 ${row.target.question.number} 题 · ${rowLabel}`;
+      number.setAttribute('aria-label', `第 ${row.target.question.number} 题，${rowLabel}${reviewLabel ? `，${reviewLabel}` : ''}`);
+      number.title = `第 ${row.target.question.number} 题 · ${rowLabel}${reviewLabel ? ` · ${reviewLabel}` : ''}`;
       let view = rowViews.get(row.id);
       if (!view) { view = createRow(row.id); rowViews.set(row.id, view); }
       const before: Element | null = previous ? previous.nextElementSibling : rows.firstElementChild;
@@ -340,6 +362,19 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
       view.stem.textContent = row.target.question.stem;
       renderQuestionContent(view, row.target.question);
       view.current.textContent = formatCurrentAnswer(row.target.question, row.currentAnswer);
+      if (row.review) {
+        view.element.dataset.review = row.review.status;
+        view.review.hidden = false;
+        view.reviewHeading.textContent = reviewLabel;
+        view.reviewSuggestionBlock.hidden = row.review.status !== 'suspect';
+        view.reviewSuggestion.textContent = row.review.suggestedAnswer ? formatCurrentAnswer(row.target.question, row.review.suggestedAnswer) : '';
+        view.reviewReason.textContent = row.review.reason;
+      } else {
+        delete view.element.dataset.review;
+        view.review.hidden = true;
+        view.reviewSuggestion.textContent = '';
+        view.reviewReason.textContent = '';
+      }
       const hasCurrent = Boolean(row.currentAnswer && [row.currentAnswer.choices, row.currentAnswer.texts, row.currentAnswer.matches,
         row.currentAnswer.children?.flatMap(child => child.choices)].some(values => values?.some(value => value.trim())));
       const resultMode = row.phase === 'querying' || (row.text && !hasCurrent && row.phase !== 'filled') ? 'generated' : 'current';
@@ -376,8 +411,8 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
       row.target.scopeKey, row.target.question.fingerprint]));
     if (identity !== paperIdentity || state.previewStale || !extractionEnabled) { paperIdentity = identity; clearCopy(); }
     if (!enabled || saving || state.running) clearConfirmation();
-    phase.textContent = phaseLabels[state.phase];
-    phase.dataset.phase = state.phase;
+    phase.textContent = state.reviewing ? '复检中' : phaseLabels[state.phase];
+    phase.dataset.phase = state.reviewing ? 'running' : state.phase;
     if (source.value !== (state.source ?? '')) source.value = state.source ?? '';
     source.disabled = !enabled || saving || state.running || Boolean(state.sourceSaving);
     const notice = answerSourceNotice(state);
@@ -424,6 +459,45 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
     start.textContent = dependencies.embedded ? '仅本次答题' : state.phase === 'paused' ? '继续答题' : state.phase === 'complete' ? '重新识别题目' : '开始答题';
     stop.hidden = !enabled || Boolean(dependencies.embedded) || !state.running || !showRunActions;
     featureSettings.hidden = !settings || !settings.enabled || (enabled && state.sources?.ai.enabled !== false);
+    const reviewSupported = Boolean(dependencies.answer.reviewAnswers);
+    const paper = state.papers?.length === 1 ? state.papers[0] : undefined;
+    const allRowsInPaper = Boolean(paper && paper.rowIds.length === state.rows.length
+      && paper.rowIds.every(id => state.rows.some(row => row.id === id)));
+    const incomplete = state.rows.filter(row => !isCompleteApplicableAnswer(row.target.question, row.currentAnswer));
+    const unsupported = state.rows.filter(row => !row.target.question.supported);
+    const hasImages = state.rows.some(row => row.target.question.images.length);
+    let reviewReason = '';
+    if (!reviewSupported) reviewReason = '当前版本未接入整卷复检。';
+    else if (!enabled) reviewReason = '请先开启批量答题功能。';
+    else if (state.reviewing) reviewReason = state.reviewProgress || '正在复检整卷…';
+    else if (!state.rows.length || !state.papers?.length) reviewReason = '读取整卷后可用。';
+    else if (state.previewStale) reviewReason = '题目页面已更换，请先刷新阅览。';
+    else if (state.papers.length !== 1 || !allRowsInPaper) reviewReason = '仅支持单一且完整的整卷。';
+    else if (paper?.complete) reviewReason = '平台已显示本卷完成，不能再复检。';
+    else if (!paper?.allLoaded) reviewReason = '尚未核实整卷题量或页面仍有分页。';
+    else if (unsupported.length) reviewReason = `仍有 ${unsupported.length} 道题不支持复检。`;
+    else if (state.rows.some(row => row.target.question.textRecognition?.status === 'pending')) reviewReason = '仍有题目文字正在识别。';
+    else if (state.rows.some(row => row.readOnly)) reviewReason = '仍有题目控件未就绪或只可阅览。';
+    else if (state.sourcesError || !state.sources) reviewReason = '正在读取 AI 配置，请稍候。';
+    else if (!state.sources.ai.enabled) reviewReason = 'AI 作答功能未启用。';
+    else if (!state.sources.ai.configured || !state.sources.ai.authorized) reviewReason = '尚未配置并授权 AI 接口。';
+    else if (hasImages && state.sources.ai.supportsImages !== true) reviewReason = '整卷含图片题，请先启用支持图片输入的模型。';
+    else if (incomplete.length) reviewReason = `还有 ${incomplete.length} 道题未完整作答。`;
+    else if (state.running || saving || state.sourceSaving) reviewReason = state.reviewing ? '正在复检整卷…' : '当前已有其他答题任务。';
+    reviewActions.hidden = !enabled || !reviewSupported;
+    reviewButton.hidden = !reviewSupported;
+    reviewButton.textContent = state.reviewing ? '停止复检' : 'AI 整卷复检';
+    reviewButton.disabled = !enabled || (!state.reviewing && (Boolean(reviewReason) || Boolean(state.previewing)));
+    reviewButton.setAttribute('aria-busy', String(Boolean(state.reviewing)));
+    reviewStatus.hidden = !reviewSupported;
+    reviewStatus.textContent = state.reviewError || state.reviewProgress || reviewReason
+      || (state.rows.some(row => row.review?.status === 'suspect') ? '红色题目为 AI 发现的疑似错误。' : '')
+      || (state.rows.some(row => row.review?.status === 'uncertain') ? '橙色题目需要你人工确认。' : '')
+      || '整卷已满足复检条件。';
+    reviewStatus.dataset.kind = state.reviewError ? 'error'
+      : state.rows.some(row => row.review?.status === 'suspect') ? 'suspect'
+        : state.rows.some(row => row.review?.status === 'uncertain') ? 'uncertain'
+          : reviewReason && !state.reviewing ? 'muted' : 'info';
     rows.hidden = state.rows.length === 0;
     grid.hidden = state.rows.length === 0;
     copyActions.hidden = !extractionEnabled || !state.rows.length;
@@ -455,6 +529,13 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
   copyCurrent.addEventListener('click', () => { void copyQuestions(false); }, { signal });
   copyAll.addEventListener('click', () => { void copyQuestions(true); }, { signal });
   follow.addEventListener('click', () => { clearConfirmation(); dependencies.answer.followProgress?.(); }, { signal });
+  reviewButton.addEventListener('click', () => {
+    if (state.reviewing) { dependencies.answer.stop(); return; }
+    if (reviewButton.disabled) return;
+    clearConfirmation();
+    localError = '';
+    dependencies.answer.reviewAnswers?.();
+  }, { signal });
   const unsubscribe = dependencies.answer.subscribe(value => { state = value; localError = ''; render(); });
   render();
   return {

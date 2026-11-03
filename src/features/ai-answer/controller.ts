@@ -127,6 +127,7 @@ export function createAiAnswerController(deps: AiControllerDependencies): AiAnsw
 
   async function evaluate(replace: boolean): Promise<void> {
     if (disposed || evaluating || active || !state.running || !deps.isEnabled()) return;
+    const startedAt = Date.now();
     const page = readThinkLadderState(deps.document);
     if (page.state !== 'question') { inspect(); return; }
     const question = page.question;
@@ -162,10 +163,12 @@ export function createAiAnswerController(deps: AiControllerDependencies): AiAnsw
       try {
         const answer = await deps.generate(question, task.abort.signal, (text) => {
           if (taskCurrent(task) && text !== state.answer) publish({ answer: text });
-        });
+        }, message => { if (taskCurrent(task)) publish({ message }); });
         if (!taskCurrent(task)) return;
         publish({ answer });
         if (!answer.trim()) throw new Error('模型没有返回有效回答，请检查配置后重试。');
+        await deps.waitBeforeFill?.(startedAt, task.abort.signal, message => { if (taskCurrent(task)) publish({ message }); });
+        if (!taskCurrent(task)) return;
         if (!sameQuestion(question)) { inspect(); return; }
         const latest = await deps.readAnswer();
         if (!taskCurrent(task)) return;

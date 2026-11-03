@@ -5,6 +5,7 @@ import type { AnswerFrameSnapshot } from './background';
 import { isAnswerPageCommand, isAnswerPageResult } from './protocol';
 import { canUseQuestionAnswerOperation } from './permissions';
 import { observeQuestionStructure } from './structure';
+import { isQuestionReviewResult, type QuestionReviewRequest, type QuestionReviewResult } from './review';
 import {
   ANSWER_FRAME_PORT, ANSWER_GENERATION_PORT, type AnswerPageCommand, type AnswerPageResult,
   type AnswerResult, type AnswerSourceMode, type AnswerSourcesStatus, type PreparedQuestion, type QuestionTarget,
@@ -162,11 +163,41 @@ export function createQuestionAnswerClient(bridge: PageBridge, getSettings: () =
 }
 
 export function generateQuestionAnswer(prepared: PreparedQuestion, source: AnswerSourceMode, signal: AbortSignal, onProgress: (text: string) => void, onStatus: (text: string) => void = () => {}): Promise<AnswerResult> {
+  return generationPortRequest('generate', {
+    // Rich copy text is a view-only projection, not part of the provider protocol.
+    // Delete the key even when undefined; do not rely on transport serialization.
+    prepared: { ...prepared, question: (() => {
+      const question = { ...prepared.question };
+      delete question.markdown;
+      return question;
+    })() },
+    source,
+  }, signal, onProgress, onStatus).then(result => result as AnswerResult);
+}
+
+export async function reviewQuestionAnswers(
+  request: QuestionReviewRequest,
+  signal: AbortSignal,
+  onProgress: (text: string) => void,
+  onStatus: (text: string) => void = () => {},
+): Promise<QuestionReviewResult> {
+  const result = await generationPortRequest('review', { request }, signal, onProgress, onStatus);
+  if (!isQuestionReviewResult(result)) throw new Error('整卷复检服务返回了无效结果，未产生部分标记。');
+  return result;
+}
+
+function generationPortRequest(
+  type: 'generate' | 'review',
+  payload: Record<string, unknown>,
+  signal: AbortSignal,
+  onProgress: (text: string) => void,
+  onStatus: (text: string) => void,
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) { reject(cancelled()); return; }
     const port = chrome.runtime.connect({ name: ANSWER_GENERATION_PORT });
     let done = false;
-    const finish = (result?: AnswerResult, error?: Error) => {
+    const finish = (result?: unknown, error?: Error) => {
       if (done) return;
       done = true; clearTimeout(timer); clearInterval(heartbeat); signal.removeEventListener('abort', abort);
       try { port.disconnect(); } catch { /* Already disconnected. */ }
@@ -182,7 +213,7 @@ export function generateQuestionAnswer(prepared: PreparedQuestion, source: Answe
       catch { finish(undefined, new Error('答案服务连接中断，未填写。')); }
     }, 15000);
     signal.addEventListener('abort', abort, { once: true });
-    port.onMessage.addListener((message: { type?: string; text?: string; result?: AnswerResult; error?: string }) => {
+    port.onMessage.addListener((message: { type?: string; text?: string; result?: unknown; error?: string }) => {
       if (done) return;
       touch();
       if (message.type === 'heartbeat') {
@@ -191,16 +222,12 @@ export function generateQuestionAnswer(prepared: PreparedQuestion, source: Answe
       }
       if (message.type === 'progress' && typeof message.text === 'string') onProgress(message.text);
       else if (message.type === 'status' && typeof message.text === 'string') onStatus(message.text);
-      else if (message.type === 'result') finish(message.result);
+      else if (message.type === (type === 'review' ? 'review-result' : 'result')) finish(message.result);
       else if (message.type === 'error') finish(undefined, new Error(message.error || '答案服务失败。'));
     });
     port.onDisconnect.addListener(() => { void chrome.runtime.lastError; if (!done) finish(undefined, new Error('答案服务连接中断，未填写。')); });
     try {
-      // Rich copy text is a view-only projection, not part of the provider protocol.
-      // Delete the key even when undefined; do not rely on transport serialization.
-      const question = { ...prepared.question };
-      delete question.markdown;
-      port.postMessage({ type: 'generate', prepared: { ...prepared, question }, source });
+      port.postMessage({ type, ...payload });
     }
     catch { finish(undefined, new Error('答案服务无法连接，请重新开始。')); }
   });

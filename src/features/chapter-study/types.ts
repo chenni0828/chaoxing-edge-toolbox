@@ -2,9 +2,14 @@ export const STUDY_RATES = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.5, 4, 6
 export const STUDY_SETTINGS_KEY = 'toolbox.chapter-study.v1';
 export type StudyStartMode = 'first-unfinished' | 'current-forward';
 export type StudyVideoQuiz = 'random' | 'ignore';
-export interface StudyPreferences { version: 1; startMode: StudyStartMode; playbackRate: number; muted: boolean; videoQuiz: StudyVideoQuiz; autoResume: boolean }
+export type StudyAnswerFinish = 'save' | 'submit' | 'stay';
+export interface StudyPreferences {
+  version: 1; startMode: StudyStartMode; playbackRate: number; muted: boolean; videoQuiz: StudyVideoQuiz; autoResume: boolean;
+  chapterAnswer?: boolean; chapterAnswerFinish?: StudyAnswerFinish;
+}
 export function defaultStudyPreferences(): StudyPreferences {
-  return { version: 1, startMode: 'first-unfinished', playbackRate: 1, muted: true, videoQuiz: 'random', autoResume: true };
+  return { version: 1, startMode: 'first-unfinished', playbackRate: 1, muted: true, videoQuiz: 'random', autoResume: true,
+    chapterAnswer: true, chapterAnswerFinish: 'save' };
 }
 export function normalizeStudyPreferences(value: unknown): StudyPreferences {
   const result = defaultStudyPreferences();
@@ -15,6 +20,8 @@ export function normalizeStudyPreferences(value: unknown): StudyPreferences {
   if (typeof input.muted === 'boolean') result.muted = input.muted;
   if (input.videoQuiz === 'ignore') result.videoQuiz = 'ignore';
   if (typeof input.autoResume === 'boolean') result.autoResume = input.autoResume;
+  if (typeof input.chapterAnswer === 'boolean') result.chapterAnswer = input.chapterAnswer;
+  if (input.chapterAnswerFinish === 'submit' || input.chapterAnswerFinish === 'stay') result.chapterAnswerFinish = input.chapterAnswerFinish;
   return result;
 }
 export type StudyTaskType = 'video' | 'courseware' | 'audio-ppt' | 'book' | 'hyperlink' | 'chapter-test';
@@ -24,6 +31,12 @@ export interface StudyFrameSnapshot {
   chapterId?: string; attachmentJobIds?: string[];
 }
 export interface StudyTaskOutcome { status: 'acted' | 'skipped' | 'attention'; message: string; chapterIncomplete?: boolean }
+export interface StudyTaskProgress {
+  runId: string; taskKey: string; documentKey: string; sequence: number;
+  phase: 'verification' | 'recovering' | 'playing' | 'manual-play'; message: string;
+}
+export type StudyProgressReporter = (progress: StudyTaskProgress) => void;
+export interface StudyNotice { runId: string; eventId: string; kind: 'verification' | 'failure' | 'clear'; message: string }
 export interface StudyTarget extends StudyTask { frameId: number; documentId?: string; documentKey: string }
 export type StudyPageRequest =
   | { action: 'inspect' }
@@ -34,7 +47,7 @@ export type StudyPageRequest =
   | { action: 'card'; cardIndex: number; runId?: string }
   | { action: 'refresh'; runId?: string };
 export interface StudyPageResult { ok: boolean; error?: string; snapshot?: StudyFrameSnapshot; outcome?: StudyTaskOutcome; cacheMiss?: boolean }
-export type StudyPhase = 'disabled' | 'unsupported' | 'waiting' | 'running' | 'confirming' | 'paused' | 'complete' | 'error';
+export type StudyPhase = 'disabled' | 'unsupported' | 'waiting' | 'running' | 'verification' | 'recovering' | 'manual-play' | 'confirming' | 'paused' | 'complete' | 'error';
 export interface StudyState {
   phase: StudyPhase; running: boolean; message: string; chapterTitle: string; taskType?: StudyTaskType;
   completed: number; skipped: string[]; preferences: StudyPreferences;
@@ -42,6 +55,7 @@ export interface StudyState {
 export interface StudySession {
   courseKey: string; runId: string; anchorId: string; visited: string[]; skipped: string[];
   completed: number; paused: boolean; expectedChapterId?: string; finished?: boolean; startMode?: StudyStartMode;
+  startedByUser?: boolean;
 }
 export interface StudyController {
   getState(): StudyState;
@@ -54,7 +68,8 @@ export interface StudyController {
 }
 export interface StudyRuntime {
   scan(signal: AbortSignal): Promise<{ targets: StudyTarget[]; cardReady: boolean; warnings: string[] }>;
-  runTask(target: StudyTarget, runId: string, preferences: StudyPreferences, signal: AbortSignal): Promise<StudyTaskOutcome>;
+  runTask(target: StudyTarget, runId: string, preferences: StudyPreferences, signal: AbortSignal, onProgress?: StudyProgressReporter): Promise<StudyTaskOutcome>;
+  notify?(notice: StudyNotice): Promise<void>;
   page(request: StudyPageRequest, signal?: AbortSignal): Promise<StudyPageResult>;
   cancel(runId: string): void;
   configure(preferences: StudyPreferences): Promise<void>;

@@ -11,6 +11,7 @@ import { SETTINGS_KEY } from '../toolbox-settings/types';
 import { waitForProvider } from '../answer-pacing/background';
 import { PACING_SETTINGS_KEY } from '../answer-pacing/types';
 import { isPreparedQuestion } from './protocol';
+import { generateQuestionReview, isQuestionReviewRequest, QuestionReviewError } from './review';
 import { readAnswerSourcesStatus } from './source-background';
 import { planAnswerSource } from './source-status';
 import { ANSWER_GENERATION_PORT, ANSWER_PREFERENCES_KEY, type AnswerResult, type AnswerSourceMode, type PreparedQuestion } from './types';
@@ -26,7 +27,8 @@ class QuestionGenerationError extends Error {}
 /** Native/storage errors can contain URLs or other private context; only known local messages cross the port. */
 export function generationErrorMessage(error: unknown): string {
   if (error instanceof ModelRequestError && error.code === 'network') return '模型服务网络请求失败，请检查网络和 API 域名权限后手动重试。';
-  if (error instanceof QuestionBankError || error instanceof ModelRequestError || error instanceof QuestionAiAnswerError || error instanceof QuestionGenerationError) {
+  if (error instanceof QuestionBankError || error instanceof ModelRequestError || error instanceof QuestionAiAnswerError
+      || error instanceof QuestionReviewError || error instanceof QuestionGenerationError) {
     return error.message.slice(0, 500);
   }
   return '答题请求失败，请检查配置和网络后手动重试。';
@@ -103,6 +105,24 @@ export async function resolveQuestionAnswer(
   return generateQuestionAnswer(config, prepared, signal, onProgress);
 }
 
+export async function resolveQuestionReview(
+  request: Parameters<typeof generateQuestionReview>[1],
+  signal: AbortSignal,
+  onProgress: (text: string) => void,
+  onStatus: (text: string) => void = onProgress,
+): ReturnType<typeof generateQuestionReview> {
+  await requireAnswerEnabled(true);
+  if (signal.aborted) throw new QuestionGenerationError('已取消整卷复检。');
+  const config = await requireApiConfig().catch(() => {
+    throw new QuestionGenerationError('AI 配置不可用，请在设置页检查接口、模型和域名授权。');
+  });
+  if (signal.aborted) throw new QuestionGenerationError('已取消整卷复检。');
+  await waitForProvider('ai', signal, onStatus);
+  if (signal.aborted) throw new QuestionGenerationError('已取消整卷复检。');
+  onStatus('正在请求 AI 整卷复检…');
+  return generateQuestionReview(config, request, signal, onProgress);
+}
+
 export function installQuestionGenerationBroker(): void {
   chrome.tabs.onRemoved.addListener(tabId => { activeTabs.get(tabId)?.abort(); activeTabs.delete(tabId); });
   chrome.storage.onChanged.addListener((changes, area) => {
@@ -141,6 +161,28 @@ export function installQuestionGenerationBroker(): void {
       if (!object(message)) return;
       if (message.type === 'cancel') { abort.abort(); clearHeartbeat(); return; }
       if (message.type === 'heartbeat') { if (started && !abort.signal.aborted) { heartbeat(); send({ type: 'heartbeat' }); } return; }
+      if (message.type === 'review' && !started) {
+        started = true;
+        if (!only(message, ['type', 'request']) || !isQuestionReviewRequest(message.request)) {
+          send({ type: 'error', error: '整卷复检数据无效、图片不完整或超出大小限制，未请求模型。' }); return;
+        }
+        const request = message.request;
+        void (async () => {
+          try {
+            if (activeTabs.has(tabId)) throw new QuestionGenerationError('当前标签页已有答题或复检请求，请暂停后重试。');
+            activeTabs.set(tabId, abort); heartbeat();
+            const result = await resolveQuestionReview(request, abort.signal,
+              text => send({ type: 'progress', text }), text => send({ type: 'status', text }));
+            send({ type: 'review-result', result });
+          } catch (error) {
+            send({ type: 'error', error: generationErrorMessage(error) });
+          } finally {
+            clearHeartbeat();
+            if (activeTabs.get(tabId) === abort) activeTabs.delete(tabId);
+          }
+        })();
+        return;
+      }
       if (message.type !== 'generate' || started) return;
       started = true;
       if (!only(message, ['type', 'prepared', 'source']) || !validatePreparedQuestion(message.prepared)

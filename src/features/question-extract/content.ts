@@ -1,4 +1,5 @@
 import { extractQuestions } from './extract';
+import { prepareQuestionFont } from '../question-font';
 import { EXTRACTION_PORT, type FrameExtraction } from '../../shared/messages';
 import { isFeatureEnabled, type Settings } from '../../shared/settings';
 
@@ -9,15 +10,21 @@ export function installQuestionExtraction(getSettings: () => Settings | undefine
     let responded = false;
     let connected = true;
     const frameKey = crypto.randomUUID();
-    port.onDisconnect.addListener(() => { connected = false; });
+    port.onDisconnect.addListener(() => { void chrome.runtime.lastError; connected = false; });
     port.onMessage.addListener((message) => {
       if (message?.type !== 'toolbox:extract-questions' || responded) return;
       responded = true;
-      void ready.then(() => {
+      void ready.then(async () => {
         let result: FrameExtraction;
         const settings = getSettings();
         try {
-          result = !settings || !isFeatureEnabled(settings, 'question-extract')
+          if (settings && isFeatureEnabled(settings, 'question-extract')) {
+            if (connected) port.postMessage({ type: 'toolbox:frame-pending', frameKey });
+            await prepareQuestionFont(document);
+          }
+          if (!connected) return;
+          const currentSettings = getSettings();
+          result = !currentSettings || !isFeatureEnabled(currentSettings, 'question-extract')
             ? { type: 'toolbox:frame-result', frameKey, questions: [], error: '题目提取尚未启用。' }
             : { type: 'toolbox:frame-result', frameKey, questions: extractQuestions(document) };
         } catch {

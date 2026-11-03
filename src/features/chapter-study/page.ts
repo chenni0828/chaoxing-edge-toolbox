@@ -3,7 +3,7 @@ import { discoverStudyTasks, readStudyDocumentKey, type StudyPageWindow } from '
 import { findStudyMedia, runStudyTask } from './jobs';
 import { installStudyRateHook } from './rate-hook';
 import { StudyTaskScope } from './task-scope';
-import { defaultStudyPreferences, normalizeStudyPreferences, type StudyPageRequest, type StudyPageResult } from './types';
+import { defaultStudyPreferences, normalizeStudyPreferences, type StudyPageRequest, type StudyPageResult, type StudyProgressReporter, type StudyTaskProgress } from './types';
 
 interface ActiveStudyTask {
   runId: string;
@@ -11,8 +11,10 @@ interface ActiveStudyTask {
   type: string;
   scope: StudyTaskScope;
   result: Promise<StudyPageResult>;
+  progress?: StudyTaskProgress;
+  reporters: Set<StudyProgressReporter>;
 }
-interface InstalledStudyPage extends FeatureController { handle(request: StudyPageRequest): Promise<StudyPageResult> }
+interface InstalledStudyPage extends FeatureController { handle(request: StudyPageRequest, report?: StudyProgressReporter): Promise<StudyPageResult> }
 const pages = new WeakMap<Window, InstalledStudyPage>();
 
 function chapterId(element: Element): string {
@@ -120,7 +122,7 @@ export function installChapterStudy(window: Window): FeatureController {
       win.removeEventListener('pageshow', onShow);
       pages.delete(win);
     },
-    async handle(request) {
+    async handle(request, report) {
       if (disposed) return { ok: false, error: '章节学习控制器已经释放，请刷新页面。' };
       if (request.action === 'configure') {
         const next = normalizeStudyPreferences(request.preferences);
@@ -164,7 +166,10 @@ export function installChapterStudy(window: Window): FeatureController {
       }
       if (request.documentKey !== documentKey()) return { ok: false, error: '任务页面已变更，已阻止过期操作。' };
       if (cancelledRuns.has(request.runId)) return { ok: false, outcome: { status: 'skipped', message: '本次学习已取消。' } };
-      if (active?.runId === request.runId && active.taskKey === request.taskKey) return active.result;
+      if (active?.runId === request.runId && active.taskKey === request.taskKey) {
+        if (report) { active.reporters.add(report); if (active.progress) report(active.progress); }
+        return active.result;
+      }
       if (active) return { ok: false, error: '本页面还有任务未结束，请先暂停后重试。' };
       const entry = discoverStudyTasks(win, documentKey()).entries.find(item => item.task.key === request.taskKey);
       if (!entry) return { ok: true, outcome: { status: 'skipped', message: '任务已完成或已从当前页面移除，等待目录确认。' } };
@@ -176,11 +181,20 @@ export function installChapterStudy(window: Window): FeatureController {
       rateHook.setEnabled(true);
       const scope = new StudyTaskScope(win, () => !disposed && enabled && documentKey() === request.documentKey
         && (!entry.element || entry.element.isConnected));
-      const pending: ActiveStudyTask = { runId: request.runId, taskKey: request.taskKey, type: entry.task.type, scope, result: Promise.resolve({ ok: true }) };
+      const pending: ActiveStudyTask = { runId: request.runId, taskKey: request.taskKey, type: entry.task.type, scope,
+        result: Promise.resolve({ ok: true }), reporters: new Set(report ? [report] : []) };
       active = pending;
+      let sequence = 0;
       pending.result = (async (): Promise<StudyPageResult> => {
         try {
-          return { ok: true, outcome: await runStudyTask(entry, scope, () => preferences) };
+          return { ok: true, outcome: await runStudyTask(entry, scope, () => preferences, (phase, message) => {
+            scope.check();
+            if (active !== pending) return;
+            const progress: StudyTaskProgress = { runId: request.runId, taskKey: request.taskKey,
+              documentKey: request.documentKey, sequence: ++sequence, phase, message };
+            pending.progress = progress;
+            for (const listener of pending.reporters) listener(progress);
+          }) };
         } catch (error) {
           if (scope.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
             return { ok: true, outcome: { status: 'skipped', message: '本次学习已取消，未继续播放或翻页。' } };
@@ -188,6 +202,7 @@ export function installChapterStudy(window: Window): FeatureController {
           return { ok: true, outcome: { status: 'attention', message: '页面接口执行失败，已暂停，请手动检查当前任务。' } };
         } finally {
           scope.close();
+          pending.reporters.clear();
           if (active === pending) active = undefined;
         }
       })();
@@ -198,8 +213,8 @@ export function installChapterStudy(window: Window): FeatureController {
   return controller;
 }
 
-export async function handleStudyPageRequest(win: Window, request: StudyPageRequest): Promise<StudyPageResult> {
+export async function handleStudyPageRequest(win: Window, request: StudyPageRequest, report?: StudyProgressReporter): Promise<StudyPageResult> {
   if (!pages.has(win)) installChapterStudy(win);
-  try { return await pages.get(win)!.handle(request); }
+  try { return await pages.get(win)!.handle(request, report); }
   catch { return { ok: false, error: '无法读取当前学习页面，请刷新后重试。' }; }
 }

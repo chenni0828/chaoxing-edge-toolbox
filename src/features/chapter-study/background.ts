@@ -1,8 +1,8 @@
 import { broadcastPublic, isSupportedContent, privateStorageReady, type BackgroundRoutes } from '../../core/background-context';
 import { readStoredSettings } from '../toolbox-settings/background';
 import { isFeatureEnabled } from '../toolbox-settings/types';
-import { isStudyId, isStudyPageRequest, isStudyPageResult, isStudyPreferences, isStudySession, STUDY_CANCEL, STUDY_PORT, STUDY_WAKE } from './protocol';
-import { normalizeStudyPreferences, STUDY_SETTINGS_KEY, type StudyPageRequest, type StudyPageResult, type StudyTarget } from './types';
+import { isStudyId, isStudyPageRequest, isStudyPageResult, isStudyPreferences, isStudySession, isStudyProgress, progressMatches, STUDY_CANCEL, STUDY_PORT, STUDY_WAKE } from './protocol';
+import { normalizeStudyPreferences, STUDY_SETTINGS_KEY, type StudyPageRequest, type StudyPageResult, type StudyTarget, type StudyProgressReporter } from './types';
 
 const sessionPrefix = (tabId: number) => `chapter-study.session.${tabId}`;
 const sessionKey = (tabId: number, courseKey: string) => `${sessionPrefix(tabId)}.${encodeURIComponent(courseKey)}`;
@@ -43,6 +43,7 @@ export const studyRoutes: BackgroundRoutes = {
 
 interface PagePending {
   command: StudyPageRequest; resolve(result: StudyPageResult): void; reject(error: Error): void;
+  progress?: StudyProgressReporter;
   timer?: ReturnType<typeof setTimeout>;
 }
 interface HubResult { result?: unknown; error?: string }
@@ -82,9 +83,9 @@ export function installStudyBroker(): void {
     try { peer.port.postMessage({ kind: 'page-request', id, request: pending.command }); }
     catch { clearTimeout(pending.timer); pending.timer = undefined; }
   };
-  const request = (peer: Peer, command: StudyPageRequest): Promise<StudyPageResult> => new Promise((resolve, reject) => {
+  const request = (peer: Peer, command: StudyPageRequest, progress?: StudyProgressReporter): Promise<StudyPageResult> => new Promise((resolve, reject) => {
     const id = crypto.randomUUID();
-    const pending: PagePending = { command, resolve, reject };
+    const pending: PagePending = { command, resolve, reject, progress };
     peer.pending.set(id, pending);
     postPending(peer, id, pending);
     refreshHeartbeat();
@@ -145,6 +146,7 @@ export function installStudyBroker(): void {
     peer.port = port; peer.connected = true;
     peers.set(frameId, peer);
     port.onDisconnect.addListener(() => {
+      void chrome.runtime.lastError;
       if (peer.port !== port) return;
       peer.connected = false;
       for (const pending of peer.pending.values()) { clearTimeout(pending.timer); pending.timer = undefined; }
@@ -160,6 +162,11 @@ export function installStudyBroker(): void {
       const value = message as Record<string, unknown>;
       if (value.kind === 'hello') { try { port.postMessage({ kind: 'ready' }); } catch { /* Reconnecting. */ } return; }
       if (value.kind === 'pong') return;
+      if (value.kind === 'page-progress' && isStudyId(value.id) && isStudyProgress(value.progress)) {
+        const pending = peer.pending.get(value.id);
+        if (pending && progressMatches(value.progress, pending.command)) pending.progress?.(value.progress);
+        return;
+      }
       if (value.kind === 'page-response' && isStudyId(value.id) && isStudyPageResult(value.result)) {
         const pending = peer.pending.get(value.id);
         if (pending) { clearTimeout(pending.timer); peer.pending.delete(value.id); pending.resolve(value.result); refreshHeartbeat(); }
@@ -189,6 +196,10 @@ export function installStudyBroker(): void {
         }
         if (value.operation === 'run' && Number.isSafeInteger(value.frameId) && isStudyPageRequest(value.request) && value.request.action === 'run') {
           const command = value.request;
+          const progress: StudyProgressReporter = progress => {
+            if (!peer.connected || peers.get(frameId) !== peer) return;
+            try { peer.port.postMessage({ kind: 'progress', id: value.id, progress }); } catch { /* Replayed by the frame after reconnecting. */ }
+          };
           // A restarted worker has no peers/authorization yet; wait briefly for same-document registrations.
           const deadline = Date.now() + 3000;
           while (!peers.has(value.frameId as number) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
@@ -198,7 +209,7 @@ export function installStudyBroker(): void {
           if (!target.authorized.has(command.taskKey)) {
             // Completed jobs may disappear from attachments before a worker restart. Querying an exact
             // document/run/task cache can recover their result, but must never initialize a new task.
-            const cached = await request(target, { ...command, resumeOnly: true });
+            const cached = await request(target, { ...command, resumeOnly: true }, progress);
             if (peers.get(frameId) !== peer || peers.get(target.frameId) !== target) throw new Error('任务框架已更换，请重新扫描。');
             if (!cached.cacheMiss) {
               if (!cached.ok || !cached.outcome) throw new Error(cached.error ?? '任务未返回有效结果。');
@@ -209,7 +220,7 @@ export function installStudyBroker(): void {
           if (peers.get(frameId) !== peer || peers.get(target.frameId) !== target) throw new Error('任务框架已更换，请重新扫描。');
           const authorization = target.authorized.get(command.taskKey);
           if (!authorization || authorization.documentKey !== command.documentKey) throw new Error('任务不在当前卡片已验证的任务点中，请重新扫描。');
-          const result = await request(target, { ...command, resumeOnly: false, verifiedJobId: authorization.jobId });
+          const result = await request(target, { ...command, resumeOnly: false, verifiedJobId: authorization.jobId }, progress);
           if (!result.ok || !result.outcome) throw new Error(result.error ?? '任务未返回有效结果。');
           return result.outcome;
         }
@@ -225,8 +236,10 @@ export function installStudyBroker(): void {
     });
     for (const [id, pending] of peer.pending) postPending(peer, id, pending);
     if (frameId === 0) void chrome.tabs.sendMessage(tabId, { type: STUDY_WAKE }).catch(() => undefined);
-    void chrome.storage.local.get(STUDY_SETTINGS_KEY).then(stored => request(peer,
-      { action: 'configure', preferences: normalizeStudyPreferences(stored[STUDY_SETTINGS_KEY]) })).catch(() => undefined);
+    void chrome.storage.local.get(STUDY_SETTINGS_KEY).then(stored => {
+      if (!peer.connected || peer.port !== port || peers.get(frameId) !== peer) return;
+      return request(peer, { action: 'configure', preferences: normalizeStudyPreferences(stored[STUDY_SETTINGS_KEY]) });
+    }).catch(() => undefined);
   });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes[STUDY_SETTINGS_KEY]) void broadcastPublic({

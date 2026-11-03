@@ -4,11 +4,11 @@
  */
 import type { DiscoveredStudyTask, StudyPageWindow } from './discovery';
 import { StudyTaskScope } from './task-scope';
-import type { StudyPreferences, StudyTaskOutcome } from './types';
+import type { StudyPreferences, StudyTaskOutcome, StudyTaskProgress } from './types';
 
 const attention = (message: string): StudyTaskOutcome => ({ status: 'attention', message });
 const acted = (message: string): StudyTaskOutcome => ({ status: 'acted', message });
-const FACE_MESSAGE = '检测到人脸识别，请手动进行识别后脚本才会继续运行。';
+type ReportProgress = (phase: StudyTaskProgress['phase'], message: string) => void;
 
 /**
  * 按 URL 定位学习顶层页面（而不是按 frame 嵌套），人脸检查统一在该文档上执行，
@@ -30,32 +30,29 @@ function studyTopDocument(win: Window): Document | undefined {
   try { return resolveStudyTop(win).document; } catch { return undefined; }
 }
 
-/** 只有带 src 的人脸二维码才算正在识别。 */
+function isVisible(element: Element): boolean {
+  if (!element.isConnected) return false;
+  const win = element.ownerDocument.defaultView;
+  for (let node: Element | null = element; node; node = node.parentElement) {
+    if (node.hasAttribute('hidden') || node.getAttribute('aria-hidden') === 'true') return false;
+    const style = win?.getComputedStyle(node);
+    if (style?.display === 'none' || style?.visibility === 'hidden' || style?.visibility === 'collapse') return false;
+  }
+  return true;
+}
+
+/** Ignore cached QR codes inside hidden verification dialogs. */
 function hasFaceRecognition(win: Window): boolean {
   const doc = studyTopDocument(win);
   if (!doc) return false;
-  return Array.from(doc.querySelectorAll('#fcqrimg')).some(image => Boolean(image.getAttribute('src')));
+  return Array.from(doc.querySelectorAll('#fcqrimg')).some(image => Boolean(image.getAttribute('src')) && isVisible(image));
 }
 
-/** 新遮罩只要内联 display 不是 none 就算正在识别。 */
 function hasNewFaceRecognition(win: Window): boolean {
   const doc = studyTopDocument(win);
   if (!doc) return false;
   return Array.from(doc.querySelectorAll<HTMLElement>('.chapterVideoFaceMaskDiv'))
-    .some(mask => mask.style.display !== 'none');
-}
-
-/** 每 3 秒轮询一次人脸状态，直到识别结束。 */
-async function waitForFaceState(scope: StudyTaskScope, active: () => boolean, message: string): Promise<void> {
-  let notified = false;
-  for (;;) {
-    await scope.wait(3000);
-    if (!active()) return;
-    if (!notified) {
-      notified = true;
-      console.warn(message);
-    }
-  }
+    .some(isVisible);
 }
 
 /** 忽略播放器保留在隐藏弹窗里的旧错误文案。 */
@@ -161,7 +158,7 @@ async function playWithAutoplayResult(media: HTMLMediaElement): Promise<MediaPla
  * 音视频任务：等待媒体、应用倍速与静音、监听暂停与结束。
  * 任务 scope 负责取消与计时器清理，文档卸载时也能安全退出。
  */
-async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, preferences: () => StudyPreferences): Promise<StudyTaskOutcome> {
+async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, preferences: () => StudyPreferences, report: ReportProgress): Promise<StudyTaskOutcome> {
   const doc = entry.owner.document;
   const media = await waitForStudyMedia(scope, doc);
   if (!media) return attention('3 分钟内没有找到可播放的音视频，请刷新或手动处理。');
@@ -192,7 +189,19 @@ async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, prefe
     let playbackGeneration = 0;
     let ignoredDialog = '';
     let reloadCleanup: (() => void) | undefined;
+    let faceWait: Promise<boolean> | undefined;
+    let lastProgress = '';
     const timers: { reload?: number; start?: number; skip?: number } = {};
+    const hasFace = () => hasFaceRecognition(entry.owner) || hasNewFaceRecognition(entry.owner);
+    const progress: ReportProgress = (phase, message) => {
+      if (settled || scope.signal.aborted || lastProgress === `${phase}:${message}`) return;
+      scope.check();
+      lastProgress = `${phase}:${message}`;
+      report(phase, message);
+    };
+    const onPlaying = () => {
+      if (!hasFace() && !recovering) progress('playing', `音视频正在播放（${activeMedia.playbackRate} 倍速）。`);
+    };
 
     // 降档只属于当前视频；仅用户主动改变倍速时才解除，静音等设置不影响它。
     function effectiveRate(): number {
@@ -228,6 +237,7 @@ async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, prefe
       activeMedia.removeEventListener('pause', playFunction);
       activeMedia.removeEventListener('ended', onEnded);
       activeMedia.removeEventListener('error', onError);
+      activeMedia.removeEventListener('playing', onPlaying);
       scope.signal.removeEventListener('abort', cancelled);
       activeMedia.autoplay = originalAutoplay;
       // Remove the pause listener before pausing so cleanup cannot schedule a new play.
@@ -309,9 +319,16 @@ async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, prefe
       });
     }
 
-    async function waitForFace(): Promise<void> {
-      if (hasFaceRecognition(entry.owner)) await waitForFaceState(scope, () => hasFaceRecognition(entry.owner), FACE_MESSAGE);
-      if (hasNewFaceRecognition(entry.owner)) await waitForFaceState(scope, () => hasNewFaceRecognition(entry.owner), FACE_MESSAGE);
+    async function waitForFace(): Promise<boolean> {
+      if (faceWait) return faceWait;
+      if (!hasFace()) return false;
+      faceWait = (async () => {
+        progress('verification', '请在课程页面完成人脸验证，当前学习任务正在等待。');
+        while (hasFace()) await scope.wait(300);
+        scope.check();
+        return true;
+      })();
+      try { return await faceWait; } finally { faceWait = undefined; }
     }
 
     async function recoverMedia(): Promise<void> {
@@ -328,6 +345,8 @@ async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, prefe
           if (failedRate <= 1) { skipFailedMedia(); return; }
           fallbackRate = failedRate > 2 ? 2 : 1;
           appliedRate = fallbackRate;
+          await waitForFace();
+          progress('recovering', `播放异常，正在降至 ${appliedRate} 倍速并恢复播放位置。`);
           ignoredDialog = mediaLoadError(doc);
           activeMedia.pause();
           activeMedia.playbackRate = appliedRate;
@@ -338,16 +357,21 @@ async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, prefe
           if (!ready || recoveryFailed) continue;
           await applyRate(true);
           if (!mediaLoadError(doc)) ignoredDialog = '';
-          if (!preferences().autoResume) return;
+          if (!preferences().autoResume) {
+            progress('manual-play', `已降至 ${appliedRate} 倍速并恢复位置，自动续播已关闭，请手动播放。`);
+            return;
+          }
           await waitForFace();
           await scope.wait(1000);
-          if (settled || !preferences().autoResume) return;
+          if (settled) return;
+          if (!preferences().autoResume) { progress('manual-play', '验证已结束，自动续播已关闭，请手动播放。'); return; }
           await applyRate();
           const result = await playWithAutoplayResult(activeMedia);
           scope.check();
           if (settled) return;
           if (!result.ok && result.blocked) { finish(attention(result.message)); return; }
           if (!result.ok || recoveryFailed) continue;
+          progress('playing', `已恢复播放（${appliedRate} 倍速）。`);
           return;
         }
       } catch {
@@ -364,6 +388,11 @@ async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, prefe
 
     async function playMedia(): Promise<void> {
       const generation = playbackGeneration;
+      const verified = await waitForFace();
+      if (verified && !preferences().autoResume) {
+        progress('manual-play', '验证已结束，自动续播已关闭，请手动播放。');
+        return;
+      }
       await applyRate();
       if (settled || recovering || generation !== playbackGeneration || timers.skip !== undefined) return;
       const result = await playWithAutoplayResult(activeMedia);
@@ -372,22 +401,25 @@ async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, prefe
       if (!result.ok) {
         if (result.blocked) finish(attention(result.message));
         else await recoverMedia();
-      }
+      } else onPlaying();
     }
 
     async function playFunction(): Promise<void> {
-      if (settled || scope.signal.aborted || recovering || resumePending || timers.skip !== undefined) return;
-      const face = hasFaceRecognition(entry.owner) || hasNewFaceRecognition(entry.owner);
-      // 普通暂停遵循“自动续播”开关；人脸校验结束后总是继续，
-      // 避免校验完成后播放被永久卡住。
+      if (settled || scope.signal.aborted || recovering || resumePending || faceWait || timers.skip !== undefined) return;
+      const face = hasFace();
       if (!preferences().autoResume && !face) return;
       resumePending = true;
       const generation = playbackGeneration;
       try {
-        await waitForFace();
+        const verified = await waitForFace();
+        if (!preferences().autoResume) {
+          if (verified) progress('manual-play', '验证已结束，自动续播已关闭，请手动播放。');
+          return;
+        }
         if (activeMedia.ended === false) {
           await scope.wait(1000);
-          if (settled || scope.signal.aborted || recovering || generation !== playbackGeneration || (!preferences().autoResume && !face)) return;
+          if (settled || scope.signal.aborted || recovering || generation !== playbackGeneration) return;
+          if (!preferences().autoResume) { progress('manual-play', '自动续播已关闭，请手动播放。'); return; }
           await playMedia();
         }
       } catch {
@@ -402,6 +434,7 @@ async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, prefe
     activeMedia.addEventListener('pause', playFunction);
     activeMedia.addEventListener('ended', onEnded);
     activeMedia.addEventListener('error', onError);
+    activeMedia.addEventListener('playing', onPlaying);
     scope.signal.addEventListener('abort', cancelled, { once: true });
     // Install cleanup before the speed menu's asynchronous initialization can be cancelled.
     scope.add(cleanup);
@@ -418,6 +451,7 @@ async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, prefe
 
       timers.reload = entry.owner.setInterval(() => {
         if (settled || recovering || timers.skip !== undefined) return;
+        if (hasFace()) { void playFunction(); return; }
         const dialog = mediaLoadError(doc);
         if (!dialog) ignoredDialog = '';
         if ((activeMedia.error && activeMedia.error.code !== 1) || (dialog && dialog !== ignoredDialog)) void recoverMedia();
@@ -534,10 +568,10 @@ async function runHyperlink(entry: DiscoveredStudyTask, scope: StudyTaskScope): 
   return acted('已触发链接阅读，等待目录绿勾确认。');
 }
 
-export async function runStudyTask(entry: DiscoveredStudyTask, scope: StudyTaskScope, preferences: () => StudyPreferences): Promise<StudyTaskOutcome> {
+export async function runStudyTask(entry: DiscoveredStudyTask, scope: StudyTaskScope, preferences: () => StudyPreferences, report: ReportProgress = () => {}): Promise<StudyTaskOutcome> {
   scope.check();
   switch (entry.task.type) {
-    case 'video': return runMedia(entry, scope, preferences);
+    case 'video': return runMedia(entry, scope, preferences, report);
     case 'courseware': return runCourseware(entry.owner, scope);
     case 'audio-ppt': return runAudioPpt(entry.owner, scope);
     case 'book': return runBook(entry, scope);

@@ -3,7 +3,7 @@ import type { ApiStatus } from '../api-settings/types';
 import type { StudyController } from '../chapter-study/types';
 import type { ZjoocStudyController } from '../zjooc-study/types';
 import type { QuestionAnswerController } from '../question-answer/types';
-import { getWorkspaces, getDefaultWorkspace, workspaceStyles } from '../workspace-registry';
+import { getWorkspaces, resolveSceneWorkspace, workspaceStyles, type WorkspaceView } from '../workspace-registry';
 import { getPlatform, type Platform } from '../../shared/sites';
 import type { ExtractionResponse } from '../../shared/messages';
 import type { Settings } from '../../shared/settings';
@@ -66,10 +66,12 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
   const root = document.createElement('div');
   root.innerHTML = `
     <section class="panel" role="region" aria-label="学习工具箱">
+      <button class="floating-dot" data-action="restore" data-drag-handle type="button" aria-label="恢复工具箱，拖动可调整位置" title="点击恢复工具箱 · 拖动调整位置"><span aria-hidden="true"></span></button>
       <header class="header" data-drag-handle tabindex="0" aria-label="拖动工具箱，方向键移动，Home 复位位置" title="拖动标题栏 · 方向键移动 · Home 复位">
         <div class="brand">${icon('logo', 18)}<div class="header-copy"><h2 class="header-title">工具箱</h2><span class="header-version"></span></div></div>
         <span class="drag-grip" aria-hidden="true">${icon('grip', 12)}</span>
         ${singleWorkspace ? `<button class="icon-button" data-action="settings" type="button" title="全局设置" aria-label="打开全局设置">${icon('settings', 14)}</button>` : ''}
+        <button class="icon-button" data-action="hide" type="button" aria-label="隐藏为小圆点" title="隐藏为小圆点，任务继续运行">${icon('hide', 14)}</button>
         <button class="icon-button" data-action="toggle" type="button" aria-controls="cx-toolbox-workspace" aria-expanded="false" aria-label="展开工具箱" title="展开工具箱">${icon('expand', 14)}</button>
       </header>
       <div class="drawer">
@@ -98,6 +100,7 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
   const header = find<HTMLElement>('.header');
   const drawer = find<HTMLElement>('.drawer');
   const toggle = find<HTMLButtonElement>('[data-action="toggle"]');
+  const dot = find<HTMLButtonElement>('.floating-dot');
   const master = find<HTMLInputElement>('[data-setting="enabled"]');
   const pasteShortcut = root.querySelector<HTMLButtonElement>('[data-action="paste"]');
   const status = find<HTMLElement>('[data-status]');
@@ -112,8 +115,7 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
   let settings = dependencies.getSettings();
   let minimized = true;
   let pageContext = platform.id === 'chaoxing' ? readPageContext(document) : 'generic' as const;
-  let activeView = workspaces.find(workspace => workspace.id === getDefaultWorkspace(location.href))?.id ?? workspaces[0].id;
-  let workspaceSelected = false;
+  let activeView = resolveSceneWorkspace(platform.id, pageContext);
   let saving = false;
   let disposed = false;
   let settingsRevision = 0;
@@ -151,24 +153,39 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
     } finally { saving = false; render(); }
   }
 
-  const views = workspaces.map((workspace) => ({ id: workspace.id, view: workspace.create({
-    getSettings: () => settings, saveSettings, extract: dependencies.extract,
-    getApiStatus: dependencies.getApiStatus, openSettings: dependencies.openSettings, ai: dependencies.ai, study: dependencies.study,
-    questionAnswer: dependencies.questionAnswer, zjoocStudy: dependencies.zjoocStudy,
-  }) }));
-  for (const { id, view } of views) {
-    view.element.id = `cx-view-${id}`;
-    if (!singleWorkspace) {
-      view.element.setAttribute('role', 'tabpanel');
-      view.element.setAttribute('aria-labelledby', `cx-tab-${id}`);
+  const views = new Map<ToolboxView, WorkspaceView>();
+  let renderedContext = pageContext;
+  function ensureView(): WorkspaceView {
+    if (renderedContext !== pageContext || !views.has(activeView)) {
+      // View disposal only removes UI subscriptions; shared controllers keep running.
+      for (const view of views.values()) view.dispose();
+      views.clear();
+      const workspace = workspaces.find(value => value.id === activeView)!;
+      const view = workspace.create({
+        getSettings: () => settings, saveSettings, extract: dependencies.extract,
+        getApiStatus: dependencies.getApiStatus, openSettings: dependencies.openSettings,
+        ai: dependencies.ai, questionAnswer: dependencies.questionAnswer, study: dependencies.study, zjoocStudy: dependencies.zjoocStudy,
+      });
+      view.element.id = `cx-view-${activeView}`;
+      if (!singleWorkspace) {
+        view.element.setAttribute('role', 'tabpanel');
+        view.element.setAttribute('aria-labelledby', `cx-tab-${activeView}`);
+      }
+      views.set(activeView, view);
+      renderedContext = pageContext;
+      find('[data-workspaces]').append(view.element);
     }
-    find('[data-workspaces]').append(view.element);
+    return views.get(activeView)!;
   }
   const container = installFloatingContainer({
     host, surface: find('.panel'), content: drawer,
     handles: [...root.querySelectorAll<HTMLElement>('[data-drag-handle]')],
     persistence: { read: dependencies.loadUiPreferences, write: dependencies.saveUiPreferences },
-    onModeChange(value) { minimized = value; render(); },
+    onModeChange(value) {
+      const opening = minimized && !value;
+      minimized = value; render();
+      if (opening) views.get(activeView)?.refresh?.();
+    },
     onError: message => tell(message, true),
   });
 
@@ -196,6 +213,7 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
     status.dataset.state = saving ? 'saving' : !settings ? 'loading' : settings.enabled ? 'enabled' : 'paused';
     for (const tab of root.querySelectorAll<HTMLButtonElement>('[data-view]')) {
       const descriptor = workspaces.find((workspace) => workspace.id === tab.dataset.view)!;
+      tab.hidden = Boolean(descriptor.visibleOnPage && !descriptor.visibleOnPage(pageContext));
       const title = descriptor.titleOnPage?.(pageContext) ?? descriptor.title;
       tab.querySelector<HTMLElement>('.tab-label')!.textContent = title;
       tab.title = title;
@@ -204,7 +222,9 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
       tab.setAttribute('aria-selected', String(selected));
       tab.tabIndex = selected ? 0 : -1;
     }
-    for (const { id, view } of views) { view.element.hidden = activeView !== id; view.updatePage?.(pageContext); view.update(settings, saving); }
+    const view = ensureView();
+    view.updatePage?.(pageContext);
+    view.update(settings, saving);
     if (viewChanged) body.scrollTop = 0;
     renderedView = activeView;
     if (modeChanged) {
@@ -220,13 +240,19 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
   }
 
   function open(view?: ToolboxViewRequest, focus = true): void {
-    if (disposed) return;
+    if (disposed || !platform) return;
     const requested = normalizeToolboxView(view);
-    if (requested && workspaces.some(workspace => workspace.id === requested)) { activeView = requested; workspaceSelected = true; }
+    activeView = resolveSceneWorkspace(platform.id, pageContext, requested);
     mount();
     render();
+    if (view === 'question-extract' || (requested === 'page-tools' && activeView !== 'page-tools')) {
+      const tools = views.get(activeView)?.element.querySelector<HTMLDetailsElement>('.scene-tools');
+      if (tools?.querySelector('[aria-label="题目提取"]')) tools.open = true;
+    }
+    const alreadyOpen = !minimized;
+    container.setHidden(false);
     container.setMode(false);
-    views.find((workspace) => workspace.id === activeView)?.view.refresh?.();
+    if (alreadyOpen) views.get(activeView)?.refresh?.();
     if (focus) header.focus({ preventScroll: true });
   }
 
@@ -245,6 +271,8 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
     if (!target || target.disabled) return;
     const requestedTab = workspaces.find((workspace) => workspace.id === target.dataset.view);
     if (requestedTab) open(requestedTab.id, false);
+    if (target.dataset.action === 'hide') { container.setHidden(true); dot.focus({ preventScroll: true }); }
+    if (target.dataset.action === 'restore') { container.setHidden(false); header.focus({ preventScroll: true }); }
     if (target.dataset.action === 'toggle') { if (minimized) open(); else minimize(); }
     if (target.dataset.action === 'reset') container.resetPosition();
     if (target.dataset.action === 'paste') togglePaste();
@@ -262,23 +290,26 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
     if (!(target instanceof HTMLElement) || !target.matches('[role="tab"]')) return;
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
-    const current = workspaces.findIndex((workspace) => workspace.id === activeView);
+    const visible = getWorkspaces(platform.id, pageContext);
+    const current = visible.findIndex((workspace) => workspace.id === activeView);
     const direction = event.key === 'ArrowRight' ? 1 : -1;
-    const index = event.key === 'Home' ? 0 : event.key === 'End' ? workspaces.length - 1 : (current + direction + workspaces.length) % workspaces.length;
-    const view = workspaces[index].id;
+    const index = event.key === 'Home' ? 0 : event.key === 'End' ? visible.length - 1 : (current + direction + visible.length) % visible.length;
+    const view = visible[index].id;
     open(view, false);
     root.querySelector<HTMLButtonElement>(`[data-view="${view}"]`)?.focus({ preventScroll: true });
   }, { signal });
   window.addEventListener('popstate', () => {
     pageContext = platform.id === 'chaoxing' ? readPageContext(document) : 'generic';
-    if (!workspaceSelected && !dependencies.ai?.getState().running && !dependencies.study?.getState().running && !dependencies.zjoocStudy?.getState().running) activeView = getDefaultWorkspace(location.href);
+    activeView = resolveSceneWorkspace(platform.id, pageContext);
     render();
+    if (!minimized) views.get(activeView)?.refresh?.();
   }, { signal });
   const unsubscribeAi = aiIcon ? dependencies.ai?.subscribe((state) => { aiIcon.dataset.running = String(state.running); }) : undefined;
   const unsubscribePage = platform.id === 'chaoxing' ? observePageContext(document, (context) => {
     pageContext = context;
-    if (!workspaceSelected && !dependencies.ai?.getState().running && !dependencies.study?.getState().running) activeView = getDefaultWorkspace(location.href);
+    activeView = resolveSceneWorkspace(platform.id, pageContext);
     render();
+    if (!minimized) views.get(activeView)?.refresh?.();
   }) : undefined;
 
   function mount(): void {
@@ -289,7 +320,7 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
     container.layout();
   }
   const controller: FloatingPanelController = {
-    update(value) { if (!disposed) { settingsRevision += 1; settings = value; render(); for (const { view } of views) view.refresh?.(); } },
+    update(value) { if (!disposed) { settingsRevision += 1; settings = value; render(); if (!minimized) views.get(activeView)?.refresh?.(); } },
     updatePreferences(value) {
       if (disposed) return;
       container.applySnapshot(value);
@@ -304,7 +335,7 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
       unsubscribePage?.();
       drawerAnimation?.cancel();
       container.dispose();
-      for (const { view } of views) view.dispose();
+      for (const view of views.values()) view.dispose();
       host.remove();
       if (activePanel === controller) activePanel = undefined;
     },

@@ -14,6 +14,7 @@ export interface ApiStatus {
   configured: boolean;
   authorized: boolean;
   model: string;
+  supportsImages?: boolean;
   message: string;
 }
 

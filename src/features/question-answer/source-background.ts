@@ -22,7 +22,12 @@ export async function readAnswerSourcesStatus(): Promise<AnswerSourcesStatus> {
   return {
     selection,
     bank: { configured: bank.configured, authorized: bank.authorized },
-    ai: { configured: ai.configured, authorized: ai.authorized, enabled: isFeatureEnabled(settings, 'ai-answer') },
+    ai: {
+      configured: ai.configured,
+      authorized: ai.authorized,
+      enabled: isFeatureEnabled(settings, 'ai-answer'),
+      supportsImages: ai.supportsImages === true,
+    },
   };
 }
 

@@ -1,10 +1,10 @@
 import { requestExtension } from '../../core/extension-rpc';
 import { bridgeMessage, type BridgeMessage, type PageBridge } from '../../shared/bridge';
 import { isFeatureEnabled, type Settings } from '../toolbox-settings/types';
-import { isStudyId, isStudyPageRequest, isStudyPageResult, isStudyPreferences, STUDY_CANCEL, STUDY_PORT, STUDY_WAKE } from './protocol';
-import type { StudyPageRequest, StudyPageResult, StudyRuntime, StudySession } from './types';
+import { isStudyId, isStudyPageRequest, isStudyPageResult, isStudyPreferences, isStudyProgress, progressMatches, STUDY_CANCEL, STUDY_PORT, STUDY_WAKE } from './protocol';
+import type { StudyPageRequest, StudyPageResult, StudyRuntime, StudySession, StudyTaskProgress, StudyProgressReporter } from './types';
 
-interface Pending { resolve(value: unknown): void; reject(error: Error): void; clean(): void }
+interface Pending { resolve(value: unknown): void; reject(error: Error): void; clean(): void; progress?: StudyProgressReporter }
 interface HubPending extends Pending { message: Record<string, unknown>; armTimeout(): void; pauseTimeout(): void }
 const RECOVERY_LIMIT = 30000;
 
@@ -22,10 +22,10 @@ export function createStudyFrameClient(bridge: PageBridge, getSettings: () => Se
   const activeRuns = new Set<string>();
   const cancelledRuns = new Set<string>();
   // These promises belong to this document. A broker restart must reattach instead of replaying media initialization.
-  const mainRuns = new Map<string, { runId: string; done: boolean; promise: Promise<StudyPageResult> }>();
+  const mainRuns = new Map<string, { runId: string; done: boolean; promise: Promise<StudyPageResult>; progress?: StudyTaskProgress; hubIds: Set<string> }>();
   const enabled = () => { const settings = getSettings(); return !disposed && !suspended && Boolean(settings && isFeatureEnabled(settings, 'chapter-study')); };
 
-  function mainRequest(request: StudyPageRequest, signal?: AbortSignal): Promise<StudyPageResult> {
+  function mainRequest(request: StudyPageRequest, signal?: AbortSignal, progress?: StudyProgressReporter): Promise<StudyPageResult> {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) { reject(new DOMException('已取消', 'AbortError')); return; }
       const requestId = crypto.randomUUID();
@@ -37,7 +37,7 @@ export function createStudyFrameClient(bridge: PageBridge, getSettings: () => Se
         entry.clean(); mainPending.delete(requestId);
         if (error) reject(error); else resolve(value!);
       };
-      mainPending.set(requestId, { request,
+      mainPending.set(requestId, { request, progress,
         resolve: value => finish(undefined, value as StudyPageResult), reject: error => finish(error),
         clean() { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); },
       });
@@ -122,6 +122,9 @@ export function createStudyFrameClient(bridge: PageBridge, getSettings: () => Se
         if (!entry) return;
         if (typeof value.error === 'string') entry.reject(new Error(value.error.slice(0, 500)));
         else { pending.delete(value.id); entry.clean(); entry.resolve(value.result); }
+      } else if (value.kind === 'progress' && isStudyProgress(value.progress)) {
+        const entry = pending.get(value.id);
+        if (entry && isStudyPageRequest(entry.message.request) && progressMatches(value.progress, entry.message.request)) entry.progress?.(value.progress);
       } else if (value.kind === 'page-request' && isStudyPageRequest(value.request)) {
         const request = value.request;
         if (!enabled()) return;
@@ -132,13 +135,27 @@ export function createStudyFrameClient(bridge: PageBridge, getSettings: () => Se
           else {
             const key = JSON.stringify([request.runId, request.documentKey, request.taskKey]);
             let cached = mainRuns.get(key);
-            if (cached) promise = cached.promise;
+            if (cached) {
+              cached.hubIds.add(value.id);
+              if (!cached.done && cached.progress) {
+                try { connection.postMessage({ kind: 'page-progress', id: value.id, progress: cached.progress }); }
+                catch { lostConnection(connection); }
+              }
+              promise = cached.promise;
+            }
             else if (request.resumeOnly) promise = Promise.resolve({ ok: true, cacheMiss: true });
             else {
               activeRuns.add(request.runId);
-              cached = { runId: request.runId, done: false, promise: mainRequest(request).catch(error => ({ ok: false, error: error instanceof Error ? error.message.slice(0, 500) : '任务执行失败。' })) };
+              cached = { runId: request.runId, done: false, promise: Promise.resolve({ ok: true }), hubIds: new Set([value.id]) };
               const entry = cached;
               mainRuns.set(key, entry);
+              entry.promise = mainRequest(request, undefined, progress => {
+                if (entry.done || cancelledRuns.has(request.runId) || !enabled() || (entry.progress?.sequence ?? 0) >= progress.sequence) return;
+                entry.progress = progress;
+                for (const id of entry.hubIds) {
+                  try { port?.postMessage({ kind: 'page-progress', id, progress }); } catch { /* Replayed on reconnection. */ }
+                }
+              }).catch(error => ({ ok: false, error: error instanceof Error ? error.message.slice(0, 500) : '任务执行失败。' }));
               void entry.promise.then(() => {
                 entry.done = true;
                 if (![...mainRuns.values()].some(item => item.runId === request.runId && !item.done)) activeRuns.delete(request.runId);
@@ -163,7 +180,7 @@ export function createStudyFrameClient(bridge: PageBridge, getSettings: () => Se
     return connection;
   }
 
-  function hubRequest<T>(operation: string, payload: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
+  function hubRequest<T>(operation: string, payload: Record<string, unknown> = {}, signal?: AbortSignal, progress?: StudyProgressReporter): Promise<T> {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) { reject(new DOMException('已取消', 'AbortError')); return; }
       let connection: chrome.runtime.Port;
@@ -184,7 +201,7 @@ export function createStudyFrameClient(bridge: PageBridge, getSettings: () => Se
         pauseTimeout();
         if (operation !== 'run') timer = setTimeout(() => finish(new Error('学习框架连接超时，请重试。')), 6500);
       };
-      const entry: HubPending = { message: { kind: 'request', id, operation, ...payload },
+      const entry: HubPending = { message: { kind: 'request', id, operation, ...payload }, progress,
         resolve: value => resolve(value as T), reject: finish, armTimeout, pauseTimeout,
         clean() { pauseTimeout(); signal?.removeEventListener('abort', onAbort); },
       };
@@ -217,12 +234,13 @@ export function createStudyFrameClient(bridge: PageBridge, getSettings: () => Se
       chapterId: document.querySelector<HTMLInputElement>('#curChapterId')?.value
         || document.querySelector('.posCatalog_active')?.id.replace(/^cur/, ''),
     }, signal),
-    runTask: (target, runId, preferences, signal) => hubRequest('run', {
+    runTask: (target, runId, preferences, signal, progress) => hubRequest('run', {
       frameId: target.frameId, documentId: target.documentId,
       chapterId: document.querySelector<HTMLInputElement>('#curChapterId')?.value
         || document.querySelector('.posCatalog_active')?.id.replace(/^cur/, ''),
       request: { action: 'run', runId, taskKey: target.key, documentKey: target.documentKey, preferences },
-    }, signal),
+    }, signal, progress),
+    notify: notice => requestExtension('toolbox:study:notice', { notice }),
     async page(request, signal) {
       const result = await mainRequest(request, signal);
       if (!result.ok) throw new Error(result.error ?? '页面操作失败。');
@@ -249,6 +267,10 @@ export function createStudyFrameClient(bridge: PageBridge, getSettings: () => Se
         mainReady = true;
         for (const [requestId, entry] of mainPending) bridge.send(bridgeMessage({ kind: 'study-command', requestId, request: entry.request }));
       } else if (message.kind === 'study-result' && isStudyPageResult(message.result)) mainPending.get(message.requestId)?.resolve(message.result);
+      else if (message.kind === 'study-progress' && isStudyProgress(message.progress)) {
+        const entry = mainPending.get(message.requestId);
+        if (entry && progressMatches(message.progress, entry.request)) entry.progress?.(message.progress);
+      }
     },
     settingsChanged() { if (enabled()) { try { connect(); } catch { recover(); } } else disconnect(); },
     dispose() {

@@ -21,9 +21,11 @@ import { isFeatureSupported } from '../features/catalog';
 import { createZjoocStudyController } from '../features/zjooc-study/controller';
 import { createZjoocStudyClient } from '../features/zjooc-study/client';
 import type { ZjoocStudyController } from '../features/zjooc-study/types';
-import { createQuestionAnswerClient, generateQuestionAnswer, getAnswerSourcesStatus, saveAnswerSource, subscribeAnswerSource } from '../features/question-answer/client';
-import { createQuestionAnswerController } from '../features/question-answer/controller';
-import type { QuestionAnswerController } from '../features/question-answer/types';
+import {
+  createQuestionAnswerClient, generateQuestionAnswer, getAnswerSourcesStatus, reviewQuestionAnswers,
+  saveAnswerSource, subscribeAnswerSource,
+} from '../features/question-answer/client';
+import { createQuestionAnswerController, type ChapterAnswerController } from '../features/question-answer/controller';
 import { canPreviewQuestions } from '../features/question-answer/permissions';
 import { subscribeQuestionBankStatus } from '../features/question-bank/client';
 import { readAnswerPacing, subscribeAnswerPacing } from '../features/answer-pacing/client';
@@ -40,7 +42,7 @@ function install(): void {
   let status: PageStatus = { ready: false, enabled: false, activeFeatures: [], errors: [] };
   let floatingPanel: FloatingPanelController | undefined;
   let ai: AiAnswerController | undefined;
-  let questionAnswer: QuestionAnswerController | undefined;
+  let questionAnswer: ChapterAnswerController | undefined;
   let study: StudyController | undefined;
   let zjoocStudy: ZjoocStudyController | undefined;
 
@@ -95,9 +97,17 @@ function install(): void {
         getSources: getAnswerSourcesStatus,
         saveSource: saveAnswerSource,
         generate: generateQuestionAnswer,
+        review: reviewQuestionAnswers,
         waitBeforeFill,
       });
-      study = createStudyController({ document, isEnabled: () => loaded && isFeatureEnabled(settings, 'chapter-study'), runtime: studyClient.runtime });
+      const answer = questionAnswer;
+      study = createStudyController({ document, isEnabled: () => loaded && isFeatureEnabled(settings, 'chapter-study'), runtime: studyClient.runtime,
+        chapterTestHandler: async (target, context) => {
+          if (context.preferences.chapterAnswer === false) return { status: 'skipped', message: '章节测验自动答题已关闭，需手动完成。' };
+          if (!context.startedByUser) return { status: 'attention', message: '点击章节学习的继续按钮后，才会运行新增的章节测验自动答题。' };
+          return answer.runChapter(target, context.signal, context.preferences.chapterAnswerFinish ?? 'save');
+        },
+      });
       ai = createAiAnswerController({
         document,
         isEnabled: () => loaded && isFeatureEnabled(settings, 'ai-answer'),
@@ -105,6 +115,7 @@ function install(): void {
         readAnswer: editorClient.readAnswer,
         writeAnswer: editorClient.writeAnswer,
         generate: generateAnswer,
+        waitBeforeFill,
       });
     } else if (platform.id === 'zjooc') {
       zjoocStudy = createZjoocStudyController({ document, isEnabled: () => loaded && isFeatureEnabled(settings, 'zjooc-study'), runtime: createZjoocStudyClient() });
@@ -138,7 +149,7 @@ function install(): void {
       subscribeApiStatus(() => { ai?.settingsChanged(); questionAnswer?.settingsChanged(); floatingPanel?.update(settings); });
       subscribeQuestionBankStatus(() => { questionAnswer?.settingsChanged(); floatingPanel?.update(settings); });
       subscribeAnswerSource(() => { questionAnswer?.settingsChanged(); floatingPanel?.update(settings); });
-      subscribeAnswerPacing(() => { questionAnswer?.settingsChanged(); floatingPanel?.update(settings); });
+      subscribeAnswerPacing(() => { ai?.settingsChanged(); questionAnswer?.settingsChanged(); floatingPanel?.update(settings); });
     }
     subscribeUiPreferences((preferences) => floatingPanel?.updatePreferences?.(preferences));
   }

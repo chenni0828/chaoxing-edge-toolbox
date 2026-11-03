@@ -168,4 +168,10 @@ button, a, input, select { transition: background-color 140ms, color 140ms, bord
   .appearance-card .preference-action { align-items: center; flex-direction: row; gap: 10px; }
   .appearance-card .preference-action button { width: auto; }
 }
+.backup-card { margin-top: 12px; }
+.backup-file-label { position: relative; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; overflow: hidden; }
+.backup-file { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.backup-file-label:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.backup-preview { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--border-inner); border-radius: var(--radius-md); background: var(--surface-page); }
+.backup-summary { margin: 0; color: var(--text-title); font-size: 13px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
