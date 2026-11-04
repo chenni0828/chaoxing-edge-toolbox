@@ -87,11 +87,19 @@ export function coursewareSubmissionBusy(pane: HTMLElement): boolean {
     || [...pane.querySelectorAll('[aria-busy="true"], .is-loading, .el-icon-loading')].some(isVisible);
 }
 
+const disabledSince = new WeakMap<HTMLButtonElement, number>();
+const submittedSettle = 6000;
+
 /** A settled disabled button suggests an earlier submission; only the resource marker confirms completion. */
 export function coursewareButtonSubmitted(pane: HTMLElement): boolean {
   const button = coursewareButton(pane);
-  return Boolean(button?.disabled && button.classList.contains('is-disabled') && !button.classList.contains('is-loading')
-    && button.getAttribute('aria-busy') !== 'true' && !button.querySelector('.el-icon-loading') && !pane.querySelector('[aria-busy="true"]'));
+  if (!button?.disabled) { if (button) disabledSince.delete(button); return false; }
+  // A button that mounts disabled while the viewer is still loading must not look like a submission.
+  const now = Date.now();
+  const since = disabledSince.get(button) ?? now;
+  disabledSince.set(button, since);
+  return now - since >= submittedSettle && button.classList.contains('is-disabled') && !button.classList.contains('is-loading')
+    && button.getAttribute('aria-busy') !== 'true' && !button.querySelector('.el-icon-loading') && !pane.querySelector('[aria-busy="true"]');
 }
 
 export function hasCoursewareFailure(doc: Document): boolean {
@@ -100,30 +108,45 @@ export function hasCoursewareFailure(doc: Document): boolean {
       && (!element.classList.contains('el-notification') || Boolean(element.querySelector('.el-icon-error'))));
 }
 
-/** Read the same-origin PDF.js rendered DOM, never its private application object or CDN. */
-export function coursewareReadiness(pane: HTMLElement): 'ready' | 'loading' | 'error' {
-  const frames = [...pane.querySelectorAll<HTMLIFrameElement>('iframe')].filter(isVisible);
-  // The currently supported courseware icon identifies PDF, not an arbitrary button-only task.
-  // Its button can mount before the viewer iframe, so absence is a loading state.
-  if (!frames.length) return 'loading';
-  for (const frame of frames) {
-    try {
-      const source = new URL(frame.getAttribute('src') ?? '', pane.ownerDocument.location.href);
-      if (source.origin !== pane.ownerDocument.location.origin || !/\/pdfjs\/web\/viewer\.html$/i.test(source.pathname)) return 'error';
-      const viewer = frame.contentDocument;
-      if (!viewer || viewer.readyState === 'loading' || new URL(viewer.URL).pathname !== source.pathname) return 'loading';
-      const error = viewer.querySelector('#errorWrapper, .errorWrapper');
-      if (error && isVisible(error) && error.textContent?.trim()) return 'error';
-      const rendered = [...viewer.querySelectorAll('#viewer .page[data-page-number][data-loaded="true"]')].some(page => {
-        if (!isVisible(page)) return false;
-        const canvas = page.querySelector<HTMLCanvasElement>('canvas');
-        const svg = page.querySelector('svg');
-        return Boolean((canvas && canvas.width > 0 && canvas.height > 0) || (svg && svg.children.length));
-      });
-      if (!rendered) return 'loading';
-    } catch { return 'error'; }
+interface ExternalViewer { src: string; since: number; loaded: boolean }
+const externalViewers = new WeakMap<HTMLIFrameElement, ExternalViewer>();
+const embeddedSince = new WeakMap<HTMLElement, number>();
+const viewerGrace = 800;
+
+/** A cross-origin viewer (built-in PDF reader, OSS PDF, blob) cannot expose its document. */
+function externalViewerReady(frame: HTMLIFrameElement): boolean {
+  const src = frame.getAttribute('src') ?? '';
+  let viewer = externalViewers.get(frame);
+  if (!viewer || viewer.src !== src) {
+    viewer = { src, since: Date.now(), loaded: false };
+    const tracked = viewer;
+    externalViewers.set(frame, tracked);
+    frame.addEventListener('load', () => { tracked.loaded = true; }, { once: true });
   }
-  return 'ready';
+  return viewer.loaded || Date.now() - viewer.since >= viewerGrace;
+}
+
+/**
+ * Wait for the courseware viewer to mount. The platform now renders PDFs with the browser's
+ * built-in viewer inside a cross-origin iframe, so its document can only be waited on.
+ */
+export function coursewareReadiness(pane: HTMLElement): 'ready' | 'loading' {
+  const frames = [...pane.querySelectorAll<HTMLIFrameElement>('iframe')].filter(isVisible);
+  const embedded = [...pane.querySelectorAll<HTMLElement>('embed, object')].filter(isVisible);
+  // The currently supported courseware icon identifies PDF, not an arbitrary button-only task.
+  // Its button can mount before the viewer iframe, so absence of any viewer is a loading state.
+  if (!frames.length && !embedded.length) return 'loading';
+  for (const frame of frames) {
+    // The platform's own "完成学习" button only mounts after the viewer exists; otherwise fall
+    // back to the iframe load event (or a grace period for viewers loaded before we observed it).
+    if (completionButton(pane) || externalViewerReady(frame)) continue;
+    return 'loading';
+  }
+  if (frames.length) return 'ready';
+  // <embed>/<object> viewers have no dependable load event; give the pane a short settle window.
+  const since = embeddedSince.get(pane) ?? Date.now();
+  embeddedSince.set(pane, since);
+  return completionButton(pane) || Date.now() - since >= viewerGrace ? 'ready' : 'loading';
 }
 
 export function readPlaybackRates(pane: HTMLElement): { rate: number; element: HTMLElement }[] {

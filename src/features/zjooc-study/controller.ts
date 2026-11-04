@@ -452,9 +452,9 @@ export function createZjoocStudyController({ document: doc, isEnabled, runtime, 
           if (hasCoursewareFailure(doc)) throw new Attention('平台暂未确认课件操作结果。');
           const pane = currentPane(current, id);
           if (!pane) return undefined;
-          const readiness = coursewareReadiness(pane);
-          if (readiness === 'error') throw new Attention('正在等待当前课件正常加载。');
-          if (readiness !== 'ready') return undefined;
+          // The viewer is a cross-origin built-in PDF reader; only its mount and the platform's
+          // own button state can be observed.
+          if (coursewareReadiness(pane) !== 'ready') return undefined;
           return coursewareButtonSubmitted(pane) ? coursewareButton(pane) : completionButton(pane);
         }, times.load, '课件尚未渲染完成或“完成学习”按钮暂不可用。');
         assertCurrent(current);
