@@ -63,6 +63,7 @@ export const questionAnswerStyles = `
 .answer-current { padding: 7px 8px; border: 1px solid var(--border-inner); border-radius: 8px; background: var(--surface); }
 .answer-answer-label { color: var(--text-muted); font-size: 11px; }
 .answer-current pre { margin: 4px 0 0; color: var(--text-body); white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.6; }
+.answer-current pre[data-code="true"], .answer-review-suggestion pre[data-code="true"] { max-height: 240px; overflow: auto; }
 .answer-review { display: grid; gap: 6px; padding: 7px 8px; border: 1px solid var(--border-inner); border-radius: 8px; background: var(--surface); }
 .answer-review-heading, .answer-review-reason { margin: 0; color: var(--text-body); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .answer-review-heading { font-weight: 700; }

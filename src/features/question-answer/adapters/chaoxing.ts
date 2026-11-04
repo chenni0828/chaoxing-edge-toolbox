@@ -1,5 +1,6 @@
 import type { ApplicableAnswer, AnswerControlSnapshot, QuestionKind, QuestionOption, QuestionPageSnapshot, QuestionSnapshot } from '../types';
 import { readQuestionTextDetails, type QuestionTextRead } from '../../question-font';
+import { normalizeProgramCode } from '../normalize';
 
 export interface AnswerEditor {
   isReady?: boolean | number; iframe?: HTMLIFrameElement; body?: HTMLElement; container?: HTMLElement;
@@ -9,15 +10,17 @@ export interface ChoiceControl { option: QuestionOption; element: HTMLElement; i
 export interface TextControl { id: string; element: HTMLTextAreaElement | HTMLInputElement; editor?: AnswerEditor; waiting: boolean }
 export interface MatchControl { id: string; element: HTMLSelectElement | HTMLInputElement; options: Array<{ option: QuestionOption; value: string; element: HTMLElement }> }
 export interface ChildControl { id: string; choices: ChoiceControl[] }
+export interface ProgramControl {
+  editor?: { getValue(): string; setValue(value: string): void; getOption?(name: string): unknown };
+  language: string; languageId: string; template: string; saved: string; waiting: boolean; readOnly: boolean;
+}
 export interface QuestionEntry {
   root: HTMLElement; snapshot: QuestionSnapshot; sourceId: string; choices: ChoiceControl[];
-  texts: TextControl[]; matches: MatchControl[]; children: ChildControl[];
+  texts: TextControl[]; matches: MatchControl[]; children: ChildControl[]; program?: ProgramControl;
 }
 export interface PageInspection { snapshot: QuestionPageSnapshot; entries: QuestionEntry[] }
 
 const documents = new WeakMap<Document, string>();
-const trackers = new WeakMap<Element, { id: number; changes: number; observer: MutationObserver; nodes: Node[] }>();
-let nextTracker = 0;
 const excluded = 'script,style,noscript,iframe,textarea,input,select,button,[data-cx-toolbox],#cx-toolbox-root,.stem_answer,.stem_answer2,.studentAnswer,.student-answer,.Py_answer,.mark_answer,.answer-analysis,.answerAnalysis,.analysis,.reference-answer,.colorShallow,.question-type,.question-number';
 
 export function normalizeText(value: string): string {
@@ -65,6 +68,11 @@ function questionText(element: Element, images: string[], omitChoices = false, r
     const current = node as Element;
     if (current !== element && (current.matches(excluded) || (omitChoices && current.matches('.saveSingleSelect')))) return '';
     if (current.hasAttribute('hidden') || /display\s*:\s*none|visibility\s*:\s*hidden/i.test(current.getAttribute('style') ?? '')) return '';
+    if (current.tagName === 'MJX-CONTAINER' || current.tagName === 'MATH') {
+      // MathJax SVG output has no readable text nodes; the original TeX is the only faithful source.
+      const latex = current.getAttribute('data-latex') ?? current.querySelector('[data-latex]')?.getAttribute('data-latex') ?? current.getAttribute('alttext');
+      if (latex?.trim()) return `$${latex.trim()}$`;
+    }
     if (current.tagName === 'IMG') {
       const url = imageAddress(current);
       if (!url) return '[图片地址不可用]';
@@ -81,7 +89,7 @@ function questionText(element: Element, images: string[], omitChoices = false, r
 function kindFor(number: number): QuestionKind {
   return number === 0 ? 'single' : number === 1 ? 'multiple' : number === 3 ? 'judgement'
     : [2, 4, 5, 6, 7, 8, 9, 10].includes(number) ? 'completion' : number === 11 ? 'line'
-      : number === 14 ? 'fill' : number === 15 ? 'reader' : 'unsupported';
+      : number === 14 ? 'fill' : number === 15 ? 'reader' : number === 17 ? 'program' : 'unsupported';
 }
 function disabled(element: Element): boolean {
   return Boolean(element.closest('[aria-disabled="true"],fieldset[disabled]')) || element.matches(':disabled,[readonly],[aria-readonly="true"],[contenteditable="false"]');
@@ -150,6 +158,63 @@ function matchControls(root: HTMLElement, chapter: boolean, images: string[], re
   }));
 }
 
+type ProgramEditor = { getValue(): string; setValue(value: string): void; getOption?(name: string): unknown };
+type ProgramWindow = Window & { codeEditors?: Record<string, ProgramEditor> };
+function programRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+function programEditor(win: Window, root: HTMLElement, qid: string): ProgramEditor | undefined {
+  const wrapper = root.querySelector<HTMLElement & { CodeMirror?: ProgramEditor }>('.codeEditWrap .CodeMirror, .codeEditorBoxDiv .CodeMirror')
+    ?? root.querySelector<HTMLElement & { CodeMirror?: ProgramEditor }>('.CodeMirror');
+  const candidate = wrapper?.CodeMirror ?? (win as ProgramWindow).codeEditors?.[qid];
+  return candidate && typeof candidate.getValue === 'function' && typeof candidate.setValue === 'function' ? candidate : undefined;
+}
+function programLanguage(root: HTMLElement): { language: string; languageId: string } {
+  const label = normalizeText(root.querySelector('.langList p span')?.textContent ?? '');
+  const codeName = normalizeText(root.querySelector<HTMLElement>('.langList')?.getAttribute('codename') ?? '');
+  const chosen = (value: string) => value && !/^请选择程序语言$/.test(value) ? value : '';
+  const languageId = normalizeText(root.querySelector<HTMLInputElement>('input.languageSelect')?.value ?? '') || '-1';
+  return { language: chosen(label) || chosen(codeName) || '未指定', languageId };
+}
+function programTemplate(root: HTMLElement, language: string, languageId: string): string {
+  const raw = root.querySelector<HTMLElement>('.codeEditorBoxDiv[prepared-code]')?.getAttribute('prepared-code');
+  if (!raw) return '';
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return '';
+    const entries = parsed.map(programRecord).filter((item): item is Record<string, unknown> => Boolean(item));
+    const match = entries.find(item => String(item.codeNum ?? '') === languageId)
+      ?? entries.find(item => normalizeText(String(item.codeName ?? '')) === language) ?? entries[0];
+    return typeof match?.code === 'string' ? normalizeProgramCode(match.code) ?? '' : '';
+  } catch { return ''; }
+}
+/** The page stores [{language, answer(html), answerTxt(plain code)}]; read the plain mirror, never the html. */
+export function readSavedProgramCode(root: HTMLElement, qid: string, languageId: string): string {
+  const input = Array.from(root.querySelectorAll<HTMLInputElement>('input[name^="answer"]')).find(element => element.name === `answer${qid}`);
+  const raw = input?.value.trim() ?? '';
+  if (!raw) return '';
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const entries = parsed.map(programRecord).filter((item): item is Record<string, unknown> => Boolean(item));
+      const match = entries.find(item => String(item.language ?? '') === languageId) ?? entries[0];
+      if (typeof match?.answerTxt === 'string') return normalizeProgramCode(match.answerTxt) ?? '';
+    }
+  } catch { /* Older templates may store plain code. */ }
+  return normalizeProgramCode(raw) ?? '';
+}
+function programControl(win: Window, root: HTMLElement, qid: string): ProgramControl {
+  const { language, languageId } = programLanguage(root);
+  const editor = programEditor(win, root, qid);
+  return {
+    editor, language, languageId,
+    template: programTemplate(root, language, languageId),
+    saved: readSavedProgramCode(root, qid, languageId),
+    waiting: !editor,
+    readOnly: Boolean(editor?.getOption?.('readOnly')),
+  };
+}
+
 function entryFor(win: Window, root: HTMLElement, index: number, chapter: boolean): QuestionEntry {
   const images: string[] = [];
   const reads: TextReads = new Map();
@@ -166,6 +231,7 @@ function entryFor(win: Window, root: HTMLElement, index: number, chapter: boolea
   }
   const sourceId = root.getAttribute('data-question-id') || root.querySelector<HTMLInputElement>('input[name=questionId]')?.value
     || typeNodes[0]?.id.replace(/^answertype/, '') || root.id;
+  const program = kind === 'program' ? programControl(win, root, sourceId) : undefined;
   const choiceNodes = chapter ? Array.from(root.querySelectorAll<HTMLElement>('ul li .after,ul li label:not(.before)'))
     : Array.from(root.querySelectorAll<HTMLElement>('.answerBg .answer_p'));
   const choices = ['single', 'multiple', 'judgement'].includes(kind) ? makeChoices(choiceNodes, root, images, false, reads) : [];
@@ -183,7 +249,10 @@ function entryFor(win: Window, root: HTMLElement, index: number, chapter: boolea
   if (!reason && pending) reason = '正在准备本页加密文字，请稍候重新读取。';
   const recognitionOversized = unresolved.length > 1024 || unresolved.some(item => item.raw.length > 32000)
     || unresolved.reduce((sum, item) => sum + item.raw.length, 0) > 128000;
-  if (root.querySelector('.CodeMirror,.ace_editor,.monaco-editor,.codeEditWrap,.proceduralQue')) reason = '专用编程编辑器暂不支持。';
+  if (kind === 'program' && program) {
+    if (program.languageId === '-1' || program.language === '未指定') reason = '请先在页面上选择程序语言。';
+    else if (program.waiting) reason = root.querySelector('.ace_editor,.monaco-editor') ? '当前程序题编辑器模板暂不支持。' : '编程编辑器尚未就绪，请稍候重新读取。';
+  } else if (root.querySelector('.CodeMirror,.ace_editor,.monaco-editor,.codeEditWrap,.proceduralQue')) reason = '专用编程编辑器暂不支持。';
   if (['single', 'multiple', 'judgement'].includes(kind) && (choices.length < 2 || choices.some(item => !item.option.text))) reason = '选项结构不完整。';
   if (kind === 'completion' && (!texts.length || texts.some(item => item.waiting))) reason = '文本答题控件未就绪或结构暂不支持。';
   if (kind === 'line' && (!matches.length || matches.some(item => !item.options.length || item.options.some(option => !option.value)))) reason = '连线控件结构不完整。';
@@ -192,6 +261,7 @@ function entryFor(win: Window, root: HTMLElement, index: number, chapter: boolea
   const snapshot: QuestionSnapshot = { key: `question:${signature(sourceId || `missing-${index}`)}`, fingerprint: '', number, kind, stem,
     options: choices.map(item => item.option), fields: kind === 'line' ? matches.map(item => ({ id: item.id, options: item.options.map(option => option.option) })) : texts.map(item => ({ id: item.id })),
     children: children.map(child => ({ id: child.id, stem: child.stem, options: child.choices.map(item => item.option) })), images,
+    ...(program ? { program: { language: program.language } } : {}),
     supported: !reason, ...(reason ? { reason } : {}),
     ...(unresolvedCount && !recognitionOversized ? { textRecognition: {
       status: pending ? 'pending' as const : textReads.some(read => read.recognizedCount) ? 'partial' as const : 'unavailable' as const,
@@ -199,7 +269,7 @@ function entryFor(win: Window, root: HTMLElement, index: number, chapter: boolea
     } } : {}),
   };
   // Include original question-only text so different undecoded codes cannot share a placeholder identity.
-  snapshot.fingerprint = signature(JSON.stringify([snapshot.kind, snapshot.stem, snapshot.options, snapshot.fields, snapshot.children, snapshot.images,
+  snapshot.fingerprint = signature(JSON.stringify([snapshot.kind, snapshot.stem, snapshot.options, snapshot.fields, snapshot.children, snapshot.images, snapshot.program,
     signature(JSON.stringify(textReads.map(read => read.original)))]));
   // An unsupported oversized question still needs a transportable explanation.
   // No partially truncated image set may become an answer request.
@@ -218,7 +288,7 @@ function entryFor(win: Window, root: HTMLElement, index: number, chapter: boolea
     snapshot.fields.forEach(field => field.options?.forEach(shorten));
     snapshot.children.forEach(child => { child.stem = child.stem.slice(0, 16000); child.options.forEach(shorten); });
   }
-  return { root, snapshot, sourceId, choices, texts, matches, children };
+  return { root, snapshot, sourceId, choices, texts, matches, children, ...(program ? { program } : {}) };
 }
 
 export function pageComplete(doc: Document): boolean {
@@ -364,22 +434,20 @@ function editorText(editor: AnswerEditor): { text: string; hasMedia: boolean } {
 }
 
 export function readQuestionControl(win: Window, entry: QuestionEntry): AnswerControlSnapshot {
-  const nodes: Node[] = [entry.root, ...entry.texts.flatMap(item => item.editor?.body ? [item.editor.body] : [])];
-  let tracker = trackers.get(entry.root);
-  if (!tracker || tracker.nodes.length !== nodes.length || tracker.nodes.some((node, index) => node !== nodes[index])) {
-    tracker?.observer.disconnect();
-    const state = { id: ++nextTracker, changes: 0, observer: undefined as unknown as MutationObserver, nodes };
-    const event = () => { state.changes += 1; };
-    state.observer = new (win as Window & typeof globalThis).MutationObserver(event);
-    for (const node of nodes) { state.observer.observe(node, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['checked', 'value', 'aria-checked', 'disabled', 'readonly', 'contenteditable', 'class'] }); node.addEventListener('input', event); node.addEventListener('change', event); }
-    trackers.set(entry.root, state);
-    tracker = state;
-  }
-  if (tracker.observer.takeRecords().length) tracker.changes += 1;
   const question = entry.snapshot;
   const answer: ApplicableAnswer = {};
   let hasContent = false;
+  const codeEditor = question.kind === 'program' ? entry.program?.editor : undefined;
+  const programCode = codeEditor ? normalizeProgramCode(codeEditor.getValue()) ?? '' : '';
+  const programSaved = question.kind === 'program' ? entry.program?.saved ?? '' : '';
+  const programTemplate = question.kind === 'program' ? entry.program?.template ?? '' : '';
+  const programTemplateOnly = Boolean(programCode) && !programSaved && programCode === programTemplate;
   if (['single', 'multiple', 'judgement'].includes(question.kind)) { answer.choices = entry.choices.filter(choiceSelected).map(item => item.option.id); hasContent = answer.choices.length > 0; }
+  if (question.kind === 'program') {
+    // A page-provided skeleton is not an answer; a saved draft is.
+    answer.code = programTemplateOnly ? '' : programCode || programSaved;
+    hasContent = Boolean(programSaved) || Boolean(programCode && programCode !== programTemplate);
+  }
   if (question.kind === 'completion') {
     const values = entry.texts.map(item => item.editor && !item.waiting ? editorText(item.editor)
       : item.waiting ? richText(win.document, item.element.value) : { text: normalizeText(item.element.value), hasMedia: false });
@@ -391,13 +459,16 @@ export function readQuestionControl(win: Window, entry: QuestionEntry): AnswerCo
   const blocked = pageComplete(win.document) || disabled(entry.root) || !visible(entry.root) || !entry.root.isConnected
     || entry.choices.some(choice => disabled(choice.input ?? choice.element))
     || entry.texts.some(item => item.waiting || disabled(item.element) || Boolean(item.editor?.body && disabled(item.editor.body)))
-    || entry.matches.some(item => disabled(item.element)) || entry.children.some(child => child.choices.some(choice => disabled(choice.input ?? choice.element)));
+    || entry.matches.some(item => disabled(item.element)) || entry.children.some(child => child.choices.some(choice => disabled(choice.input ?? choice.element)))
+    || (question.kind === 'program' && (!entry.program || entry.program.waiting || entry.program.readOnly));
   const ready = question.supported && !blocked;
   const complete = question.kind === 'single' || question.kind === 'judgement' ? answer.choices?.length === 1
     : question.kind === 'multiple' ? Boolean(answer.choices?.length) : question.kind === 'completion' ? Boolean(answer.texts?.length && answer.texts.every(Boolean))
       : question.kind === 'line' ? Boolean(answer.matches?.length && answer.matches.every(Boolean))
-        : Boolean(answer.children?.length && answer.children.every(child => child.choices.length === 1));
+        : question.kind === 'program' ? Boolean(programSaved) || Boolean(programCode && programCode !== programTemplate)
+          : Boolean(answer.children?.length && answer.children.every(child => child.choices.length === 1));
   const content = JSON.stringify([answer, entry.texts.map(item => item.editor && !item.waiting ? item.editor.getContent() : item.element.value)]);
-  return { ready, version: `${tracker.id}:${tracker.changes}:${signature(content)}`, hasContent, complete, answer,
+  // Version tracks the answer itself, not incidental DOM churn (CodeMirror cursor, scrollbars, run output).
+  return { ready, version: signature(content), hasContent, complete, answer,
     ...(!ready ? { error: question.reason || '题目已完成、不可编辑或答题控件未就绪。' } : {}) };
 }

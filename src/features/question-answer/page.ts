@@ -1,5 +1,5 @@
 import type { AnswerPageCommand, AnswerPageResult, ApplicableAnswer, QuestionIdentity } from './types';
-import { chapterAction, inspectQuestionPage, normalizeText, readQuestionControl, visible, type PageInspection, type QuestionEntry } from './adapters/chaoxing';
+import { chapterAction, inspectQuestionPage, normalizeText, readQuestionControl, readSavedProgramCode, visible, type PageInspection, type QuestionEntry } from './adapters/chaoxing';
 import { normalizeAnswer } from './normalize';
 import { prepareQuestionImages } from './images';
 import { prepareQuestionFont } from '../question-font';
@@ -27,8 +27,26 @@ function plainTextHtml(value: string): string {
   return `<p>${escaped.replace(/\r\n?/g, '\n').replace(/\n/g, '<br>')}</p>`;
 }
 function sameAnswer(left: ApplicableAnswer, right: ApplicableAnswer): boolean { return JSON.stringify(left) === JSON.stringify(right); }
+function saveProgram(win: Window, entry: QuestionEntry): boolean {
+  const save = (win as Window & { saveQuestion?: (questionId: string, id: string) => void }).saveQuestion;
+  if (typeof save === 'function') {
+    try { save(entry.sourceId, entry.sourceId); return true; } catch { /* Fall back to the native save control. */ }
+  }
+  const button = entry.root.querySelector<HTMLElement>('.saveButtonClass, [onclick*="saveQuestion"]');
+  if (!button) return false;
+  try { button.click(); return true; } catch { return false; }
+}
+async function waitForProgramSaved(win: Window, entry: QuestionEntry, code: string, signal: AbortSignal): Promise<boolean> {
+  const deadline = Date.now() + 2500;
+  while (Date.now() < deadline) {
+    assertActive(signal);
+    if (readSavedProgramCode(entry.root, entry.sourceId, entry.program?.languageId ?? '-1') === code) return true;
+    await delay(win, signal);
+  }
+  return false;
+}
 
-function write(win: Window, command: Extract<AnswerPageCommand, { action: 'write' }>, signal: AbortSignal): AnswerPageResult {
+async function write(win: Window, command: Extract<AnswerPageCommand, { action: 'write' }>, signal: AbortSignal): Promise<AnswerPageResult> {
   const { entry } = locate(win, command);
   let current = readQuestionControl(win, entry);
   if (!current.ready) throw new Error(current.error || '题目不可编辑。');
@@ -108,10 +126,21 @@ function write(win: Window, command: Extract<AnswerPageCommand, { action: 'write
       const next = current.answer.children!.map(item => item.id === child.id ? { id: child.id, choices: [wanted] } : item);
       mutate(() => choice.element.click(), { children: next });
     }
+  } else if (answer.code !== undefined) {
+    const code = answer.code;
+    const editor = entry.program?.editor;
+    if (!editor) throw new Error('编程编辑器未就绪，未写入代码。');
+    if (code === entry.program?.template) throw new Error('生成的代码与页面初始模板相同，未写入；请重试本题。');
+    mutate(() => editor.setValue(code), { code });
   }
   guard();
   if (!sameAnswer(current.answer, answer) || !current.complete) throw new Error('答案回读不一致，未将该题标记为已填写。');
-  return { ok: true, control: current };
+  let warning: string | undefined;
+  if (entry.snapshot.kind === 'program') {
+    if (!saveProgram(win, entry)) warning = '未找到页面保存入口；请手动点击题目下方的“保存”后核对。';
+    else if (!(await waitForProgramSaved(win, entry, answer.code ?? '', signal))) warning = '未确认平台保存；请点击题目下方的“保存”后核对。';
+  }
+  return { ok: true, control: current, ...(warning ? { warning } : {}) };
 }
 
 function delay(win: Window, signal: AbortSignal): Promise<void> {
@@ -193,7 +222,7 @@ export async function handleAnswerPageCommand(win: Window, command: AnswerPageCo
     const abort = new AbortController();
     operations.set(win.document, abort);
     try {
-      if (command.action === 'write') return write(win, command, abort.signal);
+      if (command.action === 'write') return await write(win, command, abort.signal);
       if (command.action === 'finish') return await finish(win, command, abort.signal);
       const { entry } = locate(win, command);
       const before = readQuestionControl(win, entry);

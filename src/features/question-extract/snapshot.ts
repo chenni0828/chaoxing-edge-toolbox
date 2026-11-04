@@ -3,7 +3,7 @@ import { extractQuestions, formatQuestions } from './extract';
 
 const kindLabels: Record<QuestionKind, string> = {
   single: '单选题', multiple: '多选题', judgement: '判断题', completion: '文本填写题',
-  line: '连线／匹配题', fill: '完形填空', reader: '阅读理解', unsupported: '未识别题型',
+  line: '连线／匹配题', fill: '完形填空', reader: '阅读理解', program: '程序题', unsupported: '未识别题型',
 };
 
 function imageText(address: string | undefined, number: number): string {
@@ -74,10 +74,14 @@ function appendMissingOptions(markdown: string, question: QuestionSnapshot): str
   return missing.length ? [markdown.trimEnd(), missing.join('\n\n')].filter(Boolean).join('\n\n') : markdown;
 }
 
+function programNote(question: QuestionSnapshot): string {
+  return question.program ? `\n\n编程语言：${question.program.language}` : '';
+}
+
 /** Format only the already loaded question snapshot, never controls, generated answers or a new scan. */
 export function formatQuestionSnapshot(question: QuestionSnapshot): string {
   if (question.markdown?.trim() && question.markdown.length <= QUESTION_MARKDOWN_LIMIT) {
-    return appendMissingOptions(question.markdown, question);
+    return appendMissingOptions(question.markdown, question) + programNote(question);
   }
   const seen = new Set<number>();
   const parts = [textWithImages(question.stem, question, seen), optionsText(question.options, question, seen), fieldsText(question, seen)];
@@ -86,7 +90,7 @@ export function formatQuestionSnapshot(question: QuestionSnapshot): string {
   }
   question.images.forEach((address, index) => { if (!seen.has(index + 1)) parts.push(imageText(address, index + 1)); });
   return formatQuestions([{ id: question.key, number: question.number, type: kindLabels[question.kind],
-    markdown: parts.filter(part => part.trim()).join('\n\n'), imageUrls: [], warning: question.reason }]);
+    markdown: parts.filter(part => part.trim()).join('\n\n') + programNote(question), imageUrls: [], warning: question.reason }]);
 }
 
 export function formatQuestionSnapshots(questions: readonly QuestionSnapshot[]): string {

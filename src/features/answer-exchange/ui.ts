@@ -51,6 +51,7 @@ function answerText(question: QuestionSnapshot, answer: ApplicableAnswer): strin
     const option = options.find(item => item.id === id);
     return option ? `${option.label} · ${option.text}` : id;
   }).join('；');
+  if (answer.code !== undefined) return answer.code || '未填写';
   if (answer.choices) return selected(answer.choices);
   if (answer.texts) return answer.texts.map((text, index) => `${index + 1}. ${text}`).join('\n');
   if (answer.matches) return answer.matches.map((id, index) => `${index + 1}. ${selected([id], question.fields[index]?.options)}`).join('\n');
@@ -59,6 +60,7 @@ function answerText(question: QuestionSnapshot, answer: ApplicableAnswer): strin
 function questionText(question: QuestionSnapshot): string {
   const options = (values: QuestionSnapshot['options']) => values.map(option => `${option.label}. ${option.text}`).join('\n');
   const parts = [`题干：${question.stem}`];
+  if (question.program) parts.push(`编程语言：${question.program.language}`);
   if (question.options.length) parts.push(`选项：\n${options(question.options)}`);
   for (const [index, field] of question.fields.entries()) parts.push(`填写项 ${index + 1}${field.options?.length ? `：\n${options(field.options)}` : '：____'}`);
   for (const [index, child] of question.children.entries()) parts.push(`子题 ${index + 1}：${child.stem}\n${options(child.options)}`);

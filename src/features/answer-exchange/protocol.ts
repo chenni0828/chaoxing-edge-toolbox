@@ -9,7 +9,7 @@ import {
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const only = (value: Record<string, unknown>, keys: readonly string[]): boolean => Object.keys(value).every(key => keys.includes(key));
 const identifier = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(value);
-const questionKeys = ['kind', 'stem', 'options', 'fields', 'children', 'images'];
+const questionKeys = ['kind', 'stem', 'options', 'fields', 'children', 'images', 'program'];
 const internalQuestionKeys = [...questionKeys, 'key', 'fingerprint', 'number', 'supported', 'reason', 'textRecognition', 'markdown'];
 
 function uniqueIds(values: Array<{ id: string }>): boolean {
@@ -40,6 +40,10 @@ function validQuestionStructure(question: QuestionSnapshot): boolean {
   if (question.kind === 'fill' || question.kind === 'reader') {
     return !question.options.length && !question.fields.length && question.children.length > 0
       && question.children.every(child => completeOptions(child.options));
+  }
+  if (question.kind === 'program') {
+    return !question.options.length && !question.fields.length && !question.children.length
+      && Boolean(question.program?.language.trim());
   }
   return false;
 }
@@ -74,6 +78,7 @@ export function sanitizeBankEntry(value: unknown, index = 0): BankEntry {
     key: `bank-entry:${index + 1}`, fingerprint: `bank-entry:${index + 1}`, number: `${index + 1}`,
     kind: raw.kind, stem: raw.stem, options: raw.options, fields: raw.fields,
     children: raw.children, images: raw.images, supported: true,
+    ...(raw.program !== undefined ? { program: raw.program } : {}),
   };
   if (!isQuestionSnapshot(question) || !canExportQuestion(question)) {
     throw new Error(`题库第 ${index + 1} 条题目不完整、超出限制或包含图片，未导入。`);

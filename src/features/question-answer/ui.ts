@@ -33,7 +33,7 @@ const rowLabels: Record<AnswerRow['phase'], string> = {
 };
 const sourceLabels: Record<AnswerSource, string> = { bank: '言溪题库', 'bank-ai': '言溪 AI', ai: 'AI', import: '外部 AI 导入', 'local-bank': '本地题库' };
 const kindLabels: Record<QuestionKind, string> = {
-  single: '单选', multiple: '多选', judgement: '判断', completion: '文本填写', line: '连线 / 匹配', fill: '完形填空', reader: '阅读理解', unsupported: '未知题型',
+  single: '单选', multiple: '多选', judgement: '判断', completion: '文本填写', line: '连线 / 匹配', fill: '完形填空', reader: '阅读理解', program: '程序题', unsupported: '未知题型',
 };
 
 function rowPhaseLabel(row: AnswerRow): string {
@@ -62,6 +62,7 @@ function button(text: string, action: string, primary = false): HTMLButtonElemen
 
 function formatCurrentAnswer(question: QuestionSnapshot, answer?: ApplicableAnswer): string {
   if (!answer) return '尚未读取当前答案';
+  if (answer.code !== undefined) return answer.code || '未填写';
   const optionText = (ids: string[], options = question.options) => ids.map(id => {
     const option = options.find(value => value.id === id);
     return option ? `${option.label} · ${option.text}` : id;
@@ -288,6 +289,7 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
     if (view.contentKey === key) return;
     view.contentKey = key;
     view.content.replaceChildren();
+    if (question.program) view.content.append(createElement('p', 'answer-program-language', `编程语言：${question.program.language}`));
     function appendOptions(options: QuestionSnapshot['options'], parent: HTMLElement): void {
       if (!options.length) return;
       const list = createElement('ul', 'answer-options');
@@ -362,6 +364,12 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
       view.stem.textContent = row.target.question.stem;
       renderQuestionContent(view, row.target.question);
       view.current.textContent = formatCurrentAnswer(row.target.question, row.currentAnswer);
+      const currentLabel = view.currentBlock.querySelector('.answer-answer-label');
+      if (currentLabel) currentLabel.textContent = row.target.question.kind === 'program' ? '当前页面代码' : '当前页面答案';
+      const suggestionLabel = view.reviewSuggestionBlock.querySelector('.answer-answer-label');
+      if (suggestionLabel) suggestionLabel.textContent = row.target.question.kind === 'program' ? 'AI 建议代码' : 'AI 建议答案';
+      if (row.target.question.kind === 'program') { view.current.dataset.code = 'true'; view.reviewSuggestion.dataset.code = 'true'; }
+      else { delete view.current.dataset.code; delete view.reviewSuggestion.dataset.code; }
       if (row.review) {
         view.element.dataset.review = row.review.status;
         view.review.hidden = false;
@@ -375,8 +383,9 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
         view.reviewSuggestion.textContent = '';
         view.reviewReason.textContent = '';
       }
-      const hasCurrent = Boolean(row.currentAnswer && [row.currentAnswer.choices, row.currentAnswer.texts, row.currentAnswer.matches,
-        row.currentAnswer.children?.flatMap(child => child.choices)].some(values => values?.some(value => value.trim())));
+      const hasCurrent = Boolean(row.currentAnswer && (row.currentAnswer.code?.trim()
+        || [row.currentAnswer.choices, row.currentAnswer.texts, row.currentAnswer.matches,
+          row.currentAnswer.children?.flatMap(child => child.choices)].some(values => values?.some(value => value.trim()))));
       const resultMode = row.phase === 'querying' || (row.text && !hasCurrent && row.phase !== 'filled') ? 'generated' : 'current';
       view.currentBlock.hidden = resultMode === 'generated';
       view.preview.querySelector('summary')!.textContent = resultMode === 'generated' ? '生成答案' : '详细结果 · 生成原文';

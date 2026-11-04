@@ -44,6 +44,19 @@ function booleanValue(value: string): boolean | undefined {
   return trueWords.has(word) ? true : falseWords.has(word) ? false : undefined;
 }
 
+/** Code keeps indentation and blank lines; only transport artifacts and fence wrappers are removed. */
+export function normalizeProgramCode(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  let text = value.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const fenced = /^```[^\n]*\n([\s\S]*?)\n```\s*$/.exec(text);
+  if (fenced) text = fenced[1];
+  text = text.split('\n').map(line => line.replace(/[ \t]+$/, '')).join('\n').trimEnd();
+  if (!text.trim() || text.length > 32000) return undefined;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(text)) return undefined;
+  return text;
+}
+
 function choices(value: unknown, options: QuestionOption[], multiple: boolean, judgement = false): string[] | undefined {
   let tokens = strings(value);
   if (!tokens) return undefined;
@@ -82,12 +95,18 @@ export function normalizeAnswer(question: QuestionSnapshot, raw: unknown): Appli
   }
   if (object) {
     const expected = ['single', 'multiple', 'judgement'].includes(question.kind) ? 'choices'
-      : question.kind === 'completion' ? 'texts' : question.kind === 'line' ? 'matches' : 'children';
+      : question.kind === 'completion' ? 'texts' : question.kind === 'line' ? 'matches'
+        : question.kind === 'program' ? 'code' : 'children';
     if (Object.keys(object).length !== 1 || !(expected in object)) return undefined;
   }
   if (question.kind === 'single' || question.kind === 'multiple' || question.kind === 'judgement') {
     const result = choices(object?.choices ?? value, question.options, question.kind === 'multiple', question.kind === 'judgement');
     return result ? { choices: result } : undefined;
+  }
+  if (question.kind === 'program') {
+    // One code box preserves indentation, quotes, backslashes and blank lines literally.
+    const code = normalizeProgramCode(object?.code ?? value);
+    return code ? { code } : undefined;
   }
   if (question.kind === 'completion') {
     // One text box preserves semicolons, newlines, formulas and code literally.

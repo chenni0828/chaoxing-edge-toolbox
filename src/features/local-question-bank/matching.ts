@@ -57,6 +57,7 @@ function remapAnswer(source: QuestionSnapshot, target: QuestionSnapshot, raw: Ap
     const choices = optionIds(source.options, target.options, answer.choices);
     if (choices) mapped = { choices };
   } else if (answer.texts) mapped = { texts: answer.texts };
+  else if (answer.code !== undefined) mapped = { code: answer.code };
   else if (answer.matches) {
     const matches = answer.matches.map((id, index) => optionIds(source.fields[index].options ?? [], target.fields[index].options ?? [], [id])?.[0]);
     if (matches.every((id): id is string => typeof id === 'string')) mapped = { matches };
@@ -77,6 +78,7 @@ function semanticAnswer(question: QuestionSnapshot, raw: ApplicableAnswer): unkn
   const texts = (options: QuestionOption[], ids: string[]) => ids.map(id => normalized(options.find(option => option.id === id)!.text)).sort();
   if (answer.choices) return { choices: texts(question.options, answer.choices) };
   if (answer.texts) return { texts: answer.texts };
+  if (answer.code !== undefined) return { code: answer.code };
   if (answer.matches) return { matches: answer.matches.map((id, index) => texts(question.fields[index].options ?? [], [id])[0]) };
   if (answer.children) return { children: question.children.map(child => texts(child.options, answer.children!.find(value => value.id === child.id)!.choices)) };
 }

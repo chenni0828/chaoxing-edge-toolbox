@@ -34,7 +34,6 @@ interface Run {
   imported?: Map<string, ImportedAnswer>;
   importSource?: 'import' | 'local-bank';
   kind?: 'answer' | 'review';
-  reviewBaseline?: Map<string, { version: string; answer: ApplicableAnswer }>;
 }
 const identity = (target: QuestionTarget) => ({ documentKey: target.documentKey, scopeKey: target.scopeKey, key: target.question.key, fingerprint: target.question.fingerprint });
 const rowId = (target: QuestionTarget) => `${target.frameId}:${target.documentId ?? ''}:${target.documentKey}:${target.scopeKey}:${target.question.key}`;
@@ -198,7 +197,7 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
       return;
     }
     if (!current.imported && source && state.sources) {
-      const plan = planAnswerSource(source, state.sources, Boolean(target.question.textRecognition));
+      const plan = planAnswerSource(source, state.sources, Boolean(target.question.textRecognition), target.question.kind === 'program');
       if (!plan.first) { updateRow(row.id, { phase: 'needs-review', message: plan.message }); return; }
     }
     updateRow(row.id, { phase: 'querying', message: '正在获取答案…', text: '', source: undefined, tags: undefined });
@@ -256,7 +255,7 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
       updateRow(row.id, {
         phase: 'filled', currentAnswer: written.control.answer, readOnly: false,
         ...(!sameApplicableAnswer(before.answer, written.control.answer) ? { review: undefined } : {}),
-        message: result.message ? `已填写并核对。${result.message}` : '已填写并核对。',
+        message: written.warning ? `已填写并核对。${written.warning}` : result.message ? `已填写并核对。${result.message}` : '已填写并核对。',
       });
     } catch (error) {
       throw changed ?? error;
@@ -303,7 +302,7 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
       }
 
       emit({ phase: 'running', message: '正在从页面重新核对全部答案；未完成时不会发送复检。', reviewProgress: `正在核对页面答案 0/${rows.length}` });
-      const baseline = new Map<string, { version: string; answer: ApplicableAnswer }>();
+      const baseline = new Map<string, ApplicableAnswer>();
       for (const [index, row] of rows.entries()) {
         check(current);
         emit({ reviewProgress: `正在核对页面答案 ${index + 1}/${rows.length}` });
@@ -313,9 +312,8 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
         if (!control.complete || !isCompleteApplicableAnswer(row.target.question, control.answer)) {
           throw new Error(`仍有题目未完整作答：第 ${row.target.question.number} 题。请完成整卷后重试。`);
         }
-        baseline.set(row.id, { version: control.version, answer: structuredClone(control.answer) });
+        baseline.set(row.id, structuredClone(control.answer));
       }
-      current.reviewBaseline = baseline;
 
       const items: QuestionReviewRequest['items'] = [];
       for (const [index, row] of rows.entries()) {
@@ -329,11 +327,11 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
           }
           images = prepared.images;
         }
-        const control = baseline.get(row.id)!;
+        const currentAnswer = baseline.get(row.id)!;
         items.push({
           questionId: `q-${index + 1}`,
           question: createReviewQuestion(row.target.question),
-          currentAnswer: structuredClone(control.answer),
+          currentAnswer: structuredClone(currentAnswer),
           images,
         });
       }
@@ -353,8 +351,7 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
         const control = await read(current, row.target);
         updateControl(row, control, true);
         const before = baseline.get(row.id)!;
-        if (!control.ready || !control.complete || control.version !== before.version
-            || !sameApplicableAnswer(control.answer, before.answer)) {
+        if (!control.ready || !control.complete || !sameApplicableAnswer(control.answer, before)) {
           throw new Error('复检期间页面答案已变化，整卷结果已丢弃；请确认后重新复检。');
         }
       }
@@ -441,9 +438,10 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
         const sources = await refreshSources();
         check(current);
         if (!sources) throw new Error(state.sourcesError || '答题来源配置已变化，请重新开始。');
-        const regularPlan = planAnswerSource(state.source, sources);
+        const programOnly = rows.every(row => row.target.question.kind === 'program');
+        const regularPlan = planAnswerSource(state.source, sources, false, programOnly);
         const plan = regularPlan.first ? regularPlan : rows.some(row => row.target.question.supported && row.target.question.textRecognition)
-          ? planAnswerSource(state.source, sources, true) : regularPlan;
+          ? planAnswerSource(state.source, sources, true, programOnly) : regularPlan;
         if (!plan.first || !sources.selection) {
           await readPreviewRows(allRows, current.abort.signal, () => run === current && !current.abort.signal.aborted);
           check(current);

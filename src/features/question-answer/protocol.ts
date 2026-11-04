@@ -7,6 +7,11 @@ const list = (value: unknown, check: (item: unknown) => boolean, max = 200): boo
 const strings = (value: unknown, max = 32000) => list(value, item => text(item, max));
 const option = (value: unknown) => object(value) && text(value.id) && text(value.label) && text(value.text, 16000);
 const imageData = (value: unknown): value is string => text(value, 4_000_000) && /^data:image\/(?:png|jpeg|webp|gif);base64,[a-zA-Z0-9+/=]+$/.test(value);
+const program = (value: unknown): boolean => {
+  if (!object(value) || !Object.keys(value).every(key => key === 'language')) return false;
+  const language = value.language;
+  return typeof language === 'string' && language.length <= 100 && Boolean(language.trim());
+};
 
 export function isQuestionTextRecognition(value: unknown): boolean {
   if (!object(value) || !Object.keys(value).every(key => ['status', 'unresolvedCount', 'unresolved'].includes(key))
@@ -33,9 +38,10 @@ function imageReferences(value: unknown): boolean {
 
 export function isQuestionSnapshot(value: unknown): value is QuestionSnapshot {
   return object(value) && text(value.key) && text(value.fingerprint) && text(value.number)
-    && ['single', 'multiple', 'judgement', 'completion', 'line', 'fill', 'reader', 'unsupported'].includes(String(value.kind))
+    && ['single', 'multiple', 'judgement', 'completion', 'line', 'fill', 'reader', 'program', 'unsupported'].includes(String(value.kind))
     && text(value.stem, 32000) && typeof value.supported === 'boolean'
     && (value.markdown === undefined || text(value.markdown, QUESTION_MARKDOWN_LIMIT))
+    && (value.program === undefined || program(value.program))
     && (value.reason === undefined || text(value.reason, 1000)) && list(value.options, option)
     && (value.textRecognition === undefined || isQuestionTextRecognition(value.textRecognition))
     && list(value.fields, field => object(field) && text(field.id) && (field.options === undefined || list(field.options, option)))
@@ -45,10 +51,11 @@ export function isQuestionSnapshot(value: unknown): value is QuestionSnapshot {
 
 export function isApplicableAnswer(value: unknown): value is ApplicableAnswer {
   if (!object(value)) return false;
-  return Object.keys(value).every(key => ['choices', 'texts', 'matches', 'children'].includes(key))
+  return Object.keys(value).every(key => ['choices', 'texts', 'matches', 'children', 'code'].includes(key))
     && (value.choices === undefined || strings(value.choices, 1000))
     && (value.texts === undefined || strings(value.texts))
     && (value.matches === undefined || strings(value.matches, 1000))
+    && (value.code === undefined || text(value.code, 32000))
     && (value.children === undefined || list(value.children, child => object(child) && text(child.id) && strings(child.choices, 1000)));
 }
 
@@ -83,6 +90,7 @@ export function isAnswerPageCommand(value: unknown): value is AnswerPageCommand 
 
 export function isAnswerPageResult(value: unknown): value is AnswerPageResult {
   return object(value) && typeof value.ok === 'boolean' && (value.error === undefined || text(value.error, 2000))
+    && (value.warning === undefined || text(value.warning, 1000))
     && (value.snapshot === undefined || isQuestionPageSnapshot(value.snapshot))
     && (value.prepared === undefined || isPreparedQuestion(value.prepared))
     && (value.outcome === undefined || value.outcome === 'saved' || value.outcome === 'submitted')

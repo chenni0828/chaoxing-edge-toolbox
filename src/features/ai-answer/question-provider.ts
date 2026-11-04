@@ -24,6 +24,7 @@ export function buildQuestionAnswerMessages(prepared: PreparedQuestion, config: 
     选项: optionData(question.options),
     填写项: question.fields.map(field => ({ id: field.id, ...(field.options ? { options: optionData(field.options) } : {}) })),
     子题: question.children.map(child => ({ id: child.id, stem: replaceImages(child.stem), options: optionData(child.options) })),
+    ...(question.program ? { 编程语言: question.program.language } : {}),
     图片顺序: question.images.map((_, index) => `[图片${index + 1}]`),
     ...(question.textRecognition ? { 文字识别: {
       状态: question.textRecognition.status, 未识别字数: question.textRecognition.unresolvedCount,
@@ -42,6 +43,7 @@ export function buildQuestionAnswerMessages(prepared: PreparedQuestion, config: 
       'completion 返回 {"texts":["第1空文本",...]}，数量和填写项完全一致；只有一个填写项时简答题完整答案放入第一个字符串。',
       'line 返回 {"matches":["第1填写项对应的选项id",...]}，顺序和填写项一致，每项从该填写项的选项中选择。',
       'fill 和 reader 返回 {"children":[{"id":"子题id","choices":["该子题的选项id"]},...]}，必须包含每一个子题。',
+      'program 返回 {"code":"完整源代码"}；使用题目给出的编程语言，输出完整可提交的源文件（包含必要的头文件、main 或题目要求的入口），不要只给片段；JSON 字符串内换行用 \\n 转义；不要使用 Markdown 围栏。',
       '〔此处 N 字未识别〕表示缺失文字；保留已识别信息，仅在现有题干、选项及上下文足以确定答案时作答，不要把页面原始字符编码当作正确原文。',
       '无法根据已提供信息确定答案时返回 {"unanswerable":true}，不要猜测无法辨认的图片或补造缺失内容。',
     ].join('\n') },

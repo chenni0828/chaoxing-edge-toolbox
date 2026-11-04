@@ -40,7 +40,7 @@ export function validatePreparedQuestion(value: unknown): value is PreparedQuest
   const question = value.question;
   if (!question.supported || question.kind === 'unsupported' || !question.key || !question.fingerprint
       || question.textRecognition?.status === 'pending'
-      || !only(question, ['key', 'fingerprint', 'number', 'kind', 'stem', 'options', 'fields', 'children', 'images', 'supported', 'reason', 'textRecognition'])) return false;
+      || !only(question, ['key', 'fingerprint', 'number', 'kind', 'stem', 'options', 'fields', 'children', 'images', 'supported', 'reason', 'textRecognition', 'program'])) return false;
   const optionValid = (option: object) => only(option, ['id', 'label', 'text']);
   if (!question.options.every(optionValid) || !question.fields.every(field => only(field, ['id', 'options']) && (!field.options || field.options.every(optionValid)))
       || !question.children.every(child => only(child, ['id', 'stem', 'options']) && child.options.every(optionValid))) return false;
@@ -76,11 +76,15 @@ export async function resolveQuestionAnswer(
   if (signal.aborted) throw new QuestionGenerationError('已取消答题。');
   if (!sources.selection) throw new QuestionGenerationError('请先在答题面板选择答题来源；配置 API 不会自动选择 AI。');
   if (source !== sources.selection) throw new QuestionGenerationError('答题来源已更改，请确认当前选择后重新开始。');
+  const program = prepared.question.kind === 'program';
+  if (program && source === 'bank') return {
+    status: 'no-answer', source: 'bank', text: '', message: '程序题需要 AI 生成代码；请将答题来源切换为“仅 AI”或“言溪优先，AI 补充”。',
+  };
   const incomplete = Boolean(prepared.question.textRecognition);
   if (incomplete && source === 'bank') return {
     status: 'no-answer', source: 'bank', text: '', message: '本题含未识别文字，未查询言溪题库；请切换为 AI 或“言溪优先，AI 补充”。',
   };
-  const plan = planAnswerSource(source, sources, incomplete);
+  const plan = planAnswerSource(source, sources, incomplete, program);
   if (!plan.first) throw new QuestionGenerationError(plan.message);
   if (plan.first === 'bank') {
     const config = await requireQuestionBankConfig().catch(() => { throw new QuestionGenerationError('言溪题库配置不可用，请在设置页检查 Token 和域名授权。'); });
@@ -94,7 +98,7 @@ export async function resolveQuestionAnswer(
     if (!plan.fallback) return { ...result, message: `言溪未返回可应用答案，本题保留待处理。${plan.message}` };
     onStatus('言溪未返回可应用答案，正在准备 AI 补充…');
   } else if (source === 'prefer-bank') {
-    onStatus(incomplete ? '本题含未识别文字，跳过言溪题库，正在使用 AI…' : '未配置言溪题库，正在使用 AI 答题…');
+    onStatus(program ? '程序题将由 AI 生成代码…' : incomplete ? '本题含未识别文字，跳过言溪题库，正在使用 AI…' : '未配置言溪题库，正在使用 AI 答题…');
   }
   await requireAnswerEnabled(true);
   const config = await requireApiConfig().catch(() => { throw new QuestionGenerationError('AI 配置不可用，请在设置页检查接口、模型和域名授权。'); });

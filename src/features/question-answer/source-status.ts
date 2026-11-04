@@ -13,10 +13,15 @@ function aiUnavailable(status: AnswerSourcesStatus['ai']): string {
 }
 
 /** The same local readiness rules drive the UI, queue preflight and background provider choice. */
-export function planAnswerSource(source: AnswerSourceMode | null, status: AnswerSourcesStatus, incompleteText = false): AnswerSourcePlan {
+export function planAnswerSource(source: AnswerSourceMode | null, status: AnswerSourcesStatus, incompleteText = false, aiOnly = false): AnswerSourcePlan {
   if (!source) return { fallback: false, message: '请先选择答题来源，选择后才会请求答案。'
     + (!status.bank.configured && !status.ai.configured ? '尚未配置 AI 或言溪题库，至少配置一种即可。' : '') };
   const aiReady = status.ai.enabled && status.ai.configured && status.ai.authorized;
+  if (aiOnly) {
+    if (source === 'bank') return { fallback: false, message: '程序题需要 AI 生成代码，请切换为“仅 AI”或“言溪优先，AI 补充”。' };
+    return aiReady ? { first: 'ai', fallback: false, message: '程序题将由 AI 生成代码。' }
+      : { fallback: false, message: `程序题需要 AI 生成代码。${aiUnavailable(status.ai)}` };
+  }
   if (incompleteText) {
     if (source === 'bank') return { fallback: false, message: '本题含未识别文字，请切换为 AI 或“言溪优先，AI 补充”。' };
     return aiReady ? { first: 'ai', fallback: false, message: '本题含未识别文字，将跳过题库并使用 AI。' }
@@ -43,9 +48,10 @@ export function planAnswerSource(source: AnswerSourceMode | null, status: Answer
 export function answerSourceNotice(state: QuestionAnswerState): AnswerSourcePlan {
   if (state.sourceSaving) return { fallback: false, message: '正在保存答题来源…' };
   if (state.sources) {
-    const regular = planAnswerSource(state.source, state.sources);
+    const programOnly = state.rows.length > 0 && state.rows.every(row => row.target.question.kind === 'program');
+    const regular = planAnswerSource(state.source, state.sources, false, programOnly);
     return regular.first || !state.rows.some(row => row.target.question.supported && row.target.question.textRecognition)
-      ? regular : planAnswerSource(state.source, state.sources, true);
+      ? regular : planAnswerSource(state.source, state.sources, true, programOnly);
   }
   return { fallback: false, message: state.sourcesError || '正在检查答题来源配置…' };
 }

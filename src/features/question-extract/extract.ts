@@ -172,6 +172,11 @@ function render(node: Node, context: Context): string {
   const element = node as Element;
   if (isExcluded(element) || context.omitted.has(element)) return '';
   const tag = element.tagName;
+  if (tag === 'MJX-CONTAINER' || tag === 'MATH') {
+    // The SVG paths carry no text; the original TeX keeps formulas readable and copyable.
+    const latex = element.getAttribute('data-latex') ?? element.querySelector('[data-latex]')?.getAttribute('data-latex') ?? element.getAttribute('alttext');
+    if (latex?.trim()) return `$${latex.trim()}$`;
+  }
   if (tag === 'INPUT') {
     const type = (element.getAttribute('type') ?? 'text').toLowerCase();
     return ['text', 'number', 'search'].includes(type) ? '____' : '';

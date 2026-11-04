@@ -1,4 +1,4 @@
-export type QuestionKind = 'single' | 'multiple' | 'judgement' | 'completion' | 'line' | 'fill' | 'reader' | 'unsupported';
+export type QuestionKind = 'single' | 'multiple' | 'judgement' | 'completion' | 'line' | 'fill' | 'reader' | 'program' | 'unsupported';
 export type AnswerSourceMode = 'prefer-bank' | 'bank' | 'ai';
 export type AnswerSource = 'bank' | 'bank-ai' | 'ai' | 'import' | 'local-bank';
 export type CompletionPolicy = 'save' | 'submit' | 'stay';
@@ -10,6 +10,8 @@ export interface AnswerSourcesStatus {
 }
 export interface QuestionOption { id: string; label: string; text: string }
 export interface QuestionField { id: string; options?: QuestionOption[] }
+/** Programming questions carry the language selected on the page; the code itself is an answer. */
+export interface QuestionProgram { language: string }
 export interface QuestionChild { id: string; stem: string; options: QuestionOption[] }
 export const QUESTION_MARKDOWN_LIMIT = 128_000;
 export interface QuestionTextRecognition {
@@ -22,12 +24,13 @@ export interface QuestionSnapshot {
   key: string; fingerprint: string; number: string; kind: QuestionKind; stem: string;
   options: QuestionOption[]; fields: QuestionField[]; children: QuestionChild[]; images: string[];
   supported: boolean; reason?: string;
+  program?: QuestionProgram;
   textRecognition?: QuestionTextRecognition;
   /** Read-only, fully formatted copy text captured alongside the question; never an answer input. */
   markdown?: string;
 }
 export interface ApplicableAnswer {
-  choices?: string[]; texts?: string[]; matches?: string[];
+  choices?: string[]; texts?: string[]; matches?: string[]; code?: string;
   children?: Array<{ id: string; choices: string[] }>;
 }
 export interface AnswerControlSnapshot {
@@ -57,7 +60,7 @@ export type AnswerPageCommand =
       expected: Array<{ key: string; fingerprint: string; version: string }> }
   | { action: 'cancel' };
 export interface AnswerPageResult {
-  ok: boolean; error?: string; snapshot?: QuestionPageSnapshot; control?: AnswerControlSnapshot;
+  ok: boolean; error?: string; warning?: string; snapshot?: QuestionPageSnapshot; control?: AnswerControlSnapshot;
   prepared?: PreparedQuestion; outcome?: 'saved' | 'submitted';
 }
 export type AnswerRowPhase = 'pending' | 'querying' | 'filled' | 'existing' | 'unsupported' | 'error' | 'needs-review';
