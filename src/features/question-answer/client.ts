@@ -29,6 +29,10 @@ export interface AnswerRuntime {
   subscribeInvalidation?(listener: () => void): () => void;
 }
 const cancelled = () => new DOMException('答题已暂停。', 'AbortError');
+/** A dead extension port throws English Chrome text; never show that to the page. */
+const portGone = (error: unknown): boolean => error instanceof Error
+  && /disconnected port|message port closed|extension context invalidated|receiving end does not exist/i.test(error.message);
+const connectionLost = (): Error => new Error('扩展后台连接已断开（常见于扩展更新或后台重启）。请刷新本页后重试。');
 
 /** One isolated client per frame; only the top client exposes queue dispatch in its UI. */
 export function createQuestionAnswerClient(bridge: PageBridge, getSettings: () => Settings | undefined, win?: Window) {
@@ -39,7 +43,10 @@ export function createQuestionAnswerClient(bridge: PageBridge, getSettings: () =
   const pending = new Map<string, { resolve(value: unknown): void; reject(error: Error): void; cleanup(): void }>();
   const pageOwners = new Map<string, chrome.runtime.Port>();
   const invalidations = new Set<() => void>();
-  const cancelPage = () => bridge.send(bridgeMessage({ kind: 'answer-command', requestId: crypto.randomUUID(), command: { action: 'cancel' } }));
+  const cancelPage = () => {
+    try { bridge.send(bridgeMessage({ kind: 'answer-command', requestId: crypto.randomUUID(), command: { action: 'cancel' } })); }
+    catch { /* The page bridge is already gone. */ }
+  };
   const cancelRemote = () => {
     cancelPage();
     try { port?.postMessage({ kind: 'request', id: crypto.randomUUID(), operation: 'cancel' }); } catch { /* Already disconnected. */ }
@@ -64,9 +71,12 @@ export function createQuestionAnswerClient(bridge: PageBridge, getSettings: () =
   };
   const connect = (): chrome.runtime.Port => {
     if (disposed || suspended) throw cancelled();
+    if (typeof chrome.runtime?.id !== 'string') { port = undefined; throw connectionLost(); }
     if (port) return port;
     clearTimeout(reconnect); reconnect = undefined;
-    const current = chrome.runtime.connect({ name: ANSWER_FRAME_PORT });
+    let current: chrome.runtime.Port;
+    try { current = chrome.runtime.connect({ name: ANSWER_FRAME_PORT }); }
+    catch { throw connectionLost(); }
     port = current;
     const send = (message: Record<string, unknown>) => {
       try { current.postMessage(message); } catch { lostConnection(current); }
@@ -106,7 +116,12 @@ export function createQuestionAnswerClient(bridge: PageBridge, getSettings: () =
     signal.addEventListener('abort', abort, { once: true });
     pending.set(id, { resolve, reject, cleanup });
     try { connect().postMessage({ kind: 'request', id, operation, ...payload }); }
-    catch (error) { pending.delete(id); cleanup(); reject(error); }
+    catch (error) {
+      pending.delete(id); cleanup();
+      const current = port;
+      if (current && portGone(error)) { lostConnection(current); reject(connectionLost()); return; }
+      reject(error);
+    }
   });
   const runtime: AnswerRuntime = {
     scan: async signal => {
@@ -195,7 +210,9 @@ function generationPortRequest(
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) { reject(cancelled()); return; }
-    const port = chrome.runtime.connect({ name: ANSWER_GENERATION_PORT });
+    let port: chrome.runtime.Port;
+    try { port = chrome.runtime.connect({ name: ANSWER_GENERATION_PORT }); }
+    catch { reject(connectionLost()); return; }
     let done = false;
     const finish = (result?: unknown, error?: Error) => {
       if (done) return;
@@ -229,6 +246,6 @@ function generationPortRequest(
     try {
       port.postMessage({ type, ...payload });
     }
-    catch { finish(undefined, new Error('答案服务无法连接，请重新开始。')); }
+    catch (error) { finish(undefined, portGone(error) ? connectionLost() : new Error('答案服务无法连接，请重新开始。')); }
   });
 }
