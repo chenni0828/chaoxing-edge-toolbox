@@ -156,6 +156,37 @@ function successMessages(win: Window): Map<Element, string> {
   return new Map(Array.from(win.document.querySelectorAll('.testTit_status,.layui-layer-content,.ui-dialog-content,[role=status],[role=alert]'))
     .filter(visible).map(node => [node, normalizeText(node.textContent ?? '')]));
 }
+function sameOriginParent(win: Window): Window | undefined {
+  try {
+    const parent = win.parent;
+    if (!parent || parent === win) return undefined;
+    // Reading the document is the only portable same-origin probe.
+    return parent.document ? parent : undefined;
+  } catch { return undefined; }
+}
+function shellDocuments(win: Window): Document[] {
+  const documents = [win.document];
+  let current = win;
+  for (let depth = 0; depth < 4; depth += 1) {
+    const parent = sameOriginParent(current);
+    if (!parent) break;
+    documents.push(parent.document);
+    current = parent;
+  }
+  return documents;
+}
+/** chaoxing draws its submit confirmation in the study shell, not in the quiz frame that owns the paper. */
+function shellSubmitConfirmation(win: Window): HTMLElement | undefined {
+  for (const doc of shellDocuments(win)) {
+    const prompt = doc.querySelector<HTMLElement>('#workpop');
+    if (!prompt || !visible(prompt)) continue;
+    const button = prompt.querySelector<HTMLElement>('#popok');
+    if (!button || !visible(button) || !/确认提交/.test(normalizeText(prompt.querySelector('#popcontent')?.textContent ?? ''))
+      || !/^(?:提交|确定|确认)$/.test(normalizeText(button.textContent ?? ''))) continue;
+    return button;
+  }
+  return undefined;
+}
 
 async function finish(win: Window, command: Extract<AnswerPageCommand, { action: 'finish' }>, signal: AbortSignal): Promise<AnswerPageResult> {
   function validate(allowSubmitted = false): PageInspection {
@@ -192,7 +223,7 @@ async function finish(win: Window, command: Extract<AnswerPageCommand, { action:
       if (command.policy === 'submit' && /^(?:试卷|测验|答案)?提交成功[！!。]?$/.test(text)) return { ok: true, outcome: 'submitted' };
     }
     if (command.policy === 'submit' && !confirmed) {
-      const confirm = chapterAction(win, 'confirm');
+      const confirm = chapterAction(win, 'confirm') ?? shellSubmitConfirmation(win);
       if (confirm) { validate(); confirmed = true; confirm.click(); }
     }
     await delay(win, signal);
