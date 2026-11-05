@@ -104,7 +104,6 @@ function install(): void {
       study = createStudyController({ document, isEnabled: () => loaded && isFeatureEnabled(settings, 'chapter-study'), runtime: studyClient.runtime,
         chapterTestHandler: async (target, context) => {
           if (context.preferences.chapterAnswer === false) return { status: 'skipped', message: '章节测验自动答题已关闭，需手动完成。' };
-          if (!context.startedByUser) return { status: 'attention', message: '点击章节学习的继续按钮后，才会运行新增的章节测验自动答题。' };
           return answer.runChapter(target, context.signal, context.preferences.chapterAnswerFinish ?? 'save');
         },
       });
