@@ -284,7 +284,10 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
       const scope = frames.filter(frame => frame.snapshot.scene !== 'unsupported');
       if (scope.length !== 1) throw new Error(scope.length ? '当前页面包含多个题目范围，无法进行单一整卷复检。' : '未读取到可复检的整卷题目。');
       const frame = scope[0];
-      if (!frame.snapshot.allLoaded) throw new Error('尚未核实整卷题量或页面仍有分页，不能发送整卷复检。');
+      if (!frame.snapshot.allLoaded) {
+        const saveLabel = frame.snapshot.scene === 'chapter-test' ? '保存' : '暂时保存';
+        throw new Error(`尚未核实整卷题量或页面仍有分页，不能发送整卷复检。请先在页面点「${saveLabel}」再刷新阅览。`);
+      }
       if (frame.snapshot.complete) throw new Error('平台已显示本卷完成，不能再编辑复检；请核对页面状态。');
       const rows = publishScope([frame]);
       if (!rows.length) throw new Error('整卷没有可复检题目。');

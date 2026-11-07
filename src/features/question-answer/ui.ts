@@ -453,10 +453,13 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
     inspect.hidden = !dependencies.answer.preview;
     const inspectHost = state.rows.length && enabled ? settingsButtons : actions;
     if (inspect.parentElement !== inspectHost) inspectHost.prepend(inspect);
-    const allLoaded = state.papers?.length && state.papers.every(paper => paper.allLoaded);
+    const paper = state.papers?.length === 1 ? state.papers[0] : undefined;
+    // 章节测验叫「保存」，独立作业/考试叫「暂时保存」；提示文案跟页面按钮对齐。
+    const saveLabel = paper?.scene === 'chapter-test' ? '保存' : '暂时保存';
+    const allLoaded = state.papers?.length && state.papers.every(item => item.allLoaded);
     paperStatus.hidden = !state.rows.length || Boolean(allLoaded && !state.previewStale);
     paperStatus.textContent = state.previewStale ? `上次阅览（页面已更换）· ${state.rows.length} 题，请刷新阅览`
-      : '仅阅览已加载题目；尚未核实整卷题量';
+      : `仅阅览已加载题目；整卷复检前请先在页面点「${saveLabel}」再刷新阅览`;
     paperStatus.dataset.kind = state.previewStale ? 'warning' : 'info';
     const completionLabels = { saving: '正在暂时保存…', submitting: '正在提交…', saved: '已暂时保存 · 待提交', submitted: '平台已确认提交成功', unconfirmed: '尚未确认保存或提交成功，请检查页面提示' };
     completion.hidden = !state.completion;
@@ -469,7 +472,6 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
     stop.hidden = !enabled || Boolean(dependencies.embedded) || !state.running || !showRunActions;
     featureSettings.hidden = !settings || !settings.enabled || (enabled && state.sources?.ai.enabled !== false);
     const reviewSupported = Boolean(dependencies.answer.reviewAnswers);
-    const paper = state.papers?.length === 1 ? state.papers[0] : undefined;
     const allRowsInPaper = Boolean(paper && paper.rowIds.length === state.rows.length
       && paper.rowIds.every(id => state.rows.some(row => row.id === id)));
     const incomplete = state.rows.filter(row => !isCompleteApplicableAnswer(row.target.question, row.currentAnswer));
@@ -483,7 +485,7 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
     else if (state.previewStale) reviewReason = '题目页面已更换，请先刷新阅览。';
     else if (state.papers.length !== 1 || !allRowsInPaper) reviewReason = '仅支持单一且完整的整卷。';
     else if (paper?.complete) reviewReason = '平台已显示本卷完成，不能再复检。';
-    else if (!paper?.allLoaded) reviewReason = '尚未核实整卷题量或页面仍有分页。';
+    else if (!paper?.allLoaded) reviewReason = `尚未核实整卷题量或页面仍有分页：请先在页面点「${saveLabel}」再刷新阅览。`;
     else if (unsupported.length) reviewReason = `仍有 ${unsupported.length} 道题不支持复检。`;
     else if (state.rows.some(row => row.target.question.textRecognition?.status === 'pending')) reviewReason = '仍有题目文字正在识别。';
     else if (state.rows.some(row => row.readOnly)) reviewReason = '仍有题目控件未就绪或只可阅览。';
