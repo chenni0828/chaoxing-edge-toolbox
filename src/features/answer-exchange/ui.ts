@@ -25,6 +25,8 @@ interface Preview {
   rows: Array<{ title: string; message: string; collapsible?: boolean }>;
 }
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
+/** Default folded; a manual expand is remembered for the lifetime of this page so a rebuilt panel cannot pop it open again. */
+let exchangeOpen = false;
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -71,7 +73,8 @@ function questionText(question: QuestionSnapshot): string {
 export function createAnswerExchangeView(dependencies: Dependencies): WorkspaceView {
   const bank = dependencies.bank ?? { read: readLocalBank, save: saveLocalBank, clear: clearLocalBank };
   const root = element('details', 'answer-exchange');
-  root.open = true;
+  root.open = exchangeOpen;
+  root.addEventListener('toggle', () => { exchangeOpen = root.open; });
   root.append(element('summary', '', '外部 AI 与本地题库'));
   const content = element('div', 'answer-exchange-content');
   const hint = element('p', 'answer-exchange-hint', '点击“复制当前全部（含提示词）”，把完整题目和答题要求交给其他 AI；再粘贴返回的 JSON 并解析填入。已有答案保留，插件不会自动提交。');
