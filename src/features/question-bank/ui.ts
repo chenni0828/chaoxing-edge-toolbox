@@ -5,10 +5,10 @@ import { parseQuestionBankConfigInput } from './config-import';
 /** Private token editing is mounted only on the extension options page. */
 export function mountQuestionBankSettings(root: HTMLElement): () => void {
   root.innerHTML = `<div class="card">
-    <div class="section-heading"><h2>言溪题库</h2><p>连接言溪题库，为测验、作业和考试提供参考答案。</p></div>
+    <div class="section-heading"><h2>言溪题库</h2><p>连接言溪题库，为学习通与浙学的答题面板提供参考答案。</p></div>
     <form class="settings-form" autocomplete="off">
       <p class="inline-note">言溪题库为可选来源，只配置 AI 也能自动答题。首次需在答题或章节学习面板选择来源；选择“言溪优先，AI 补充”后，先查询言溪，未命中再使用 AI；请求异常会暂停。</p>
-      <div class="field"><label for="question-bank-token">题库配置或 Token</label><div class="input-action"><input id="question-bank-token" type="password" spellcheck="false" autocapitalize="none" autocomplete="off" maxlength="65536" placeholder="粘贴官网复制的题库配置，也可直接输入 Token" aria-describedby="question-bank-import-help" required disabled /><button type="button" class="secondary reveal-bank-token" aria-controls="question-bank-token" aria-pressed="false" disabled>显示</button></div><p class="field-help" id="question-bank-import-help">在 <a href="https://tk.enncy.cn/" target="_blank" rel="noopener noreferrer">言溪题库官网</a> 点击“复制题库配置”，将整段内容粘贴到此处，自动提取 Token 后点击保存。也支持直接填写 Token；仅保存在本机，学习通网页无法读取。</p></div>
+      <div class="field"><label for="question-bank-token">题库配置或 Token</label><div class="input-action"><input id="question-bank-token" type="password" spellcheck="false" autocapitalize="none" autocomplete="off" maxlength="65536" placeholder="粘贴官网复制的题库配置，也可直接输入 Token" aria-describedby="question-bank-import-help" required disabled /><button type="button" class="secondary reveal-bank-token" aria-controls="question-bank-token" aria-pressed="false" disabled>显示</button></div><p class="field-help" id="question-bank-import-help">在 <a href="https://tk.enncy.cn/" target="_blank" rel="noopener noreferrer">言溪题库官网</a> 点击“复制题库配置”，将整段内容粘贴到此处，自动提取 Token 后点击保存。也支持直接填写 Token；仅保存在本机，学习平台网页无法读取。</p></div>
       <p class="field-help">保存时只申请 tk.enncy.cn 的访问权限，不查询题目。开始答题后将当前题干、选项和所需图片发送给言溪题库。</p>
       <div class="api-actions"><p class="bank-saved-status saved-status" aria-live="polite">正在读取题库设置…</p><div class="button-row"><button type="submit" class="primary save-bank" disabled>保存配置</button><button type="button" class="text-button clear-bank" disabled>清除配置</button></div><div class="feedback" role="status" aria-live="polite" hidden></div><button type="button" class="secondary retry-bank" hidden>重新读取设置</button></div>
     </form>

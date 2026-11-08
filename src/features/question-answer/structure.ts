@@ -1,8 +1,7 @@
 /** Observe question/frame identity, never answer values or editor content changes. */
-export function observeQuestionStructure(doc: Document, changed: () => void): () => void {
+export function observeQuestionStructure(doc: Document, changed: () => void, selector = '.TiMu,.questionLi,form#form1,form#submitForm,iframe'): () => void {
   const win = doc.defaultView;
   if (!win) return () => {};
-  const selector = '.TiMu,.questionLi,form#form1,form#submitForm,iframe';
   let timer: ReturnType<typeof setTimeout> | undefined;
   function excluded(element: Element): boolean {
     return Boolean(element.closest('[data-cx-toolbox],#cx-toolbox-root,.edui-editor,.edui-editor-iframeholder'))

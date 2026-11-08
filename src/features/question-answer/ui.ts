@@ -1,7 +1,7 @@
 import type { SettingsSection } from '../../platform/settings-navigation';
 import { isFeatureEnabled, type Settings } from '../toolbox-settings/types';
 import type { WorkspaceView } from '../workspace-registry';
-import type { AnswerRow, AnswerSource, ApplicableAnswer, QuestionAnswerController, QuestionAnswerState, QuestionKind, QuestionSnapshot } from './types';
+import type { AnswerRow, AnswerSource, ApplicableAnswer, QuestionAnswerController, QuestionAnswerState, QuestionKind, QuestionPageSnapshot, QuestionSnapshot } from './types';
 import { answerSourceNotice } from './source-status';
 import { formatQuestionSnapshot, formatQuestionSnapshots } from '../question-extract/snapshot';
 import { canPreviewQuestions } from './permissions';
@@ -13,6 +13,7 @@ interface QuestionAnswerViewDependencies {
   answer: QuestionAnswerController;
   openSettings(section?: SettingsSection): Promise<void>;
   title?: string;
+  scene?: QuestionPageSnapshot['scene'];
   embedded?: boolean;
   showRunActions?(): boolean;
   canRun?(): boolean;
@@ -76,6 +77,7 @@ function formatCurrentAnswer(question: QuestionSnapshot, answer?: ApplicableAnsw
 
 /** Keep controls and keyed result rows mounted while the shared queue progresses. */
 export function createQuestionAnswerView(dependencies: QuestionAnswerViewDependencies): WorkspaceView {
+  const zjoocTest = dependencies.scene === 'zjooc-test';
   const listeners = new AbortController();
   const { signal } = listeners;
   const root = createElement('section', 'feature-view question-answer-view');
@@ -130,7 +132,9 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
   grid.setAttribute('aria-label', '整卷题号阅览');
   const completion = createElement('p', 'answer-completion-status');
   completion.setAttribute('role', 'status');
-  const boundary = createElement('p', 'editor-hint answer-boundary', '仅处理当前已加载题目；已有答案默认保留。独立作业和考试填写后停留，章节测验按章节学习设置完成。');
+  const boundary = createElement('p', 'editor-hint answer-boundary', zjoocTest
+    ? '支持当前已加载的单选题和判断题；已有答案默认保留。请核对后在浙学页面手动提交。'
+    : '仅处理当前已加载题目；已有答案默认保留。独立作业和考试填写后停留，章节测验按章节学习设置完成。');
   const copyActions = createElement('div', 'answer-copy-actions');
   const copyCurrent = button('复制本题', 'copy-question');
   const copyAll = button('复制当前全部', 'copy-all');
@@ -143,7 +147,8 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
   copyFallback.readOnly = true;
   copyFallback.setAttribute('aria-label', '待复制的题目 Markdown');
   copyFallback.hidden = true;
-  configurationContent.append(controls, sourceStatus, boundary);
+  configurationContent.append(controls, sourceStatus);
+  if (!zjoocTest) configurationContent.append(boundary);
   configuration.append(configurationSummary, configurationContent);
   const exchange = createAnswerExchangeView({ controller: dependencies.answer });
   const reviewActions = createElement('div', 'answer-review-actions');
@@ -152,7 +157,9 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
   reviewStatus.setAttribute('role', 'status');
   reviewStatus.setAttribute('aria-live', 'polite');
   reviewActions.append(reviewButton, reviewStatus);
-  root.append(heading, configuration, exchange.element, reviewActions, message, progressLine, completion, paperStatus, grid, rows, copyActions, copyStatus, copyFallback);
+  root.append(heading);
+  if (zjoocTest) root.append(boundary);
+  root.append(configuration, exchange.element, reviewActions, message, progressLine, completion, paperStatus, grid, rows, copyActions, copyStatus, copyFallback);
 
   let settings: Settings | undefined;
   let saving = false;
@@ -174,8 +181,9 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
   function canAnswer(): boolean { return canAct() && dependencies.canRun?.() !== false && Boolean(answerSourceNotice(state).first); }
   function currentRow(id: string): AnswerRow | undefined { return state.rows.find(row => row.id === id); }
   function selectedRow(): AnswerRow | undefined { return currentRow(state.selectedId ?? '') ?? currentRow(localSelectedId) ?? state.rows[0]; }
+  function canExtract(): boolean { return Boolean(settings && isFeatureEnabled(settings, zjoocTest ? 'question-answer' : 'question-extract')); }
   function canCopy(): boolean {
-    return Boolean(settings && isFeatureEnabled(settings, 'question-extract') && !saving && !copying && !state.previewing && !state.previewStale && state.rows.length);
+    return Boolean(canExtract() && !saving && !copying && !state.previewing && !state.previewStale && state.rows.length);
   }
   function clearCopy(): void {
     ++copyRevision;
@@ -414,8 +422,8 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
   function render(): void {
     if (disposed) return;
     const enabled = Boolean(settings && isFeatureEnabled(settings, 'question-answer'));
-    const previewEnabled = canPreviewQuestions(settings);
-    const extractionEnabled = Boolean(settings && isFeatureEnabled(settings, 'question-extract'));
+    const previewEnabled = zjoocTest ? enabled : canPreviewQuestions(settings);
+    const extractionEnabled = canExtract();
     const identity = JSON.stringify(state.rows.map(row => [row.id, row.target.frameId, row.target.documentId, row.target.documentKey,
       row.target.scopeKey, row.target.question.fingerprint]));
     if (identity !== paperIdentity || state.previewStale || !extractionEnabled) { paperIdentity = identity; clearCopy(); }
@@ -437,8 +445,9 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
     sourceStatus.hidden = !enabled || Boolean(notice.first);
     recheck.hidden = !state.sourcesError;
     recheck.disabled = state.running;
+    const disabledMessage = zjoocTest ? '请在功能设置中启用“题库与 AI 答题”。' : '题目提取与答题功能均已关闭，请在功能设置中启用。';
     message.textContent = localError || (!settings ? '正在读取工具箱设置…' : !settings.enabled ? '工具箱已暂停，请先启用工具箱。'
-      : !previewEnabled ? '题目提取与答题功能均已关闭，请在功能设置中启用。' : state.message);
+      : !previewEnabled ? disabledMessage : state.message);
     message.dataset.kind = localError || state.phase === 'error' ? 'error' : 'info';
     message.hidden = !localError && previewEnabled && state.phase !== 'error' && Boolean(state.rows.length) && !state.previewStale
       && isRoutineMessage(state.message);
@@ -457,9 +466,10 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
     // 章节测验叫「保存」，独立作业/考试叫「暂时保存」；提示文案跟页面按钮对齐。
     const saveLabel = paper?.scene === 'chapter-test' ? '保存' : '暂时保存';
     const allLoaded = state.papers?.length && state.papers.every(item => item.allLoaded);
+    const reloadHint = zjoocTest ? '请等题目加载完成后刷新阅览。' : `请先在页面点「${saveLabel}」再刷新阅览。`;
     paperStatus.hidden = !state.rows.length || Boolean(allLoaded && !state.previewStale);
     paperStatus.textContent = state.previewStale ? `上次阅览（页面已更换）· ${state.rows.length} 题，请刷新阅览`
-      : `仅阅览已加载题目；整卷复检前请先在页面点「${saveLabel}」再刷新阅览`;
+      : zjoocTest ? `仅阅览已加载题目；尚未核实整卷题量。${reloadHint}` : `仅阅览已加载题目；整卷复检前${reloadHint}`;
     paperStatus.dataset.kind = state.previewStale ? 'warning' : 'info';
     const completionLabels = { saving: '正在暂时保存…', submitting: '正在提交…', saved: '已暂时保存 · 待提交', submitted: '平台已确认提交成功', unconfirmed: '尚未确认保存或提交成功，请检查页面提示' };
     completion.hidden = !state.completion;
@@ -485,7 +495,7 @@ export function createQuestionAnswerView(dependencies: QuestionAnswerViewDepende
     else if (state.previewStale) reviewReason = '题目页面已更换，请先刷新阅览。';
     else if (state.papers.length !== 1 || !allRowsInPaper) reviewReason = '仅支持单一且完整的整卷。';
     else if (paper?.complete) reviewReason = '平台已显示本卷完成，不能再复检。';
-    else if (!paper?.allLoaded) reviewReason = `尚未核实整卷题量或页面仍有分页：请先在页面点「${saveLabel}」再刷新阅览。`;
+    else if (!paper?.allLoaded) reviewReason = `尚未核实整卷题量或页面仍有分页。${reloadHint}`;
     else if (unsupported.length) reviewReason = `仍有 ${unsupported.length} 道题不支持复检。`;
     else if (state.rows.some(row => row.target.question.textRecognition?.status === 'pending')) reviewReason = '仍有题目文字正在识别。';
     else if (state.rows.some(row => row.readOnly)) reviewReason = '仍有题目控件未就绪或只可阅览。';

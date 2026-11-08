@@ -105,7 +105,7 @@ export const apiSettingsRoutes: BackgroundRoutes = {
 };
 
 export function subscribeStoredApi(): void {
-  const changed = () => { void broadcastPublic({ type: 'toolbox:api:changed' }, ['chaoxing']); };
+  const changed = () => { void broadcastPublic({ type: 'toolbox:api:changed' }, ['chaoxing', 'zjooc']); };
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && (changes[API_SETTINGS_KEY] || changes[QUESTION_BANK_SETTINGS_KEY] || changes[PACING_SETTINGS_KEY])) activeTest?.abort();
     if (area === 'local' && changes[API_SETTINGS_KEY]) changed();

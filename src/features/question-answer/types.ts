@@ -37,7 +37,7 @@ export interface AnswerControlSnapshot {
   ready: boolean; version: string; hasContent: boolean; complete: boolean; answer: ApplicableAnswer; error?: string;
 }
 export interface QuestionPageSnapshot {
-  documentKey: string; scopeKey: string; scene: 'chapter-test' | 'homework' | 'exam' | 'unsupported';
+  documentKey: string; scopeKey: string; scene: 'chapter-test' | 'homework' | 'exam' | 'zjooc-test' | 'unsupported';
   questions: QuestionSnapshot[]; complete: boolean; allLoaded: boolean; canSave: boolean; canSubmit: boolean; reason?: string;
 }
 export interface QuestionTarget {

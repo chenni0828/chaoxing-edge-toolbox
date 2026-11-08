@@ -138,7 +138,8 @@ export function installQuestionGenerationBroker(): void {
   chrome.runtime.onConnect.addListener(port => {
     if (port.name !== ANSWER_GENERATION_PORT) return;
     const sender = port.sender;
-    if (!sender || !isSupportedContent(sender, 'chaoxing') || sender.frameId !== 0 || sender.tab?.id === undefined) {
+    if (!sender || sender.frameId !== 0 || sender.tab?.id === undefined
+      || !(isSupportedContent(sender, 'chaoxing') || isSupportedContent(sender, 'zjooc'))) {
       port.disconnect(); return;
     }
     const tabId = sender.tab.id;

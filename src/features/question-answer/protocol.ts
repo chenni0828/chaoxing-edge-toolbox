@@ -72,7 +72,7 @@ export function isPreparedQuestion(value: unknown): value is PreparedQuestion {
 
 export function isQuestionPageSnapshot(value: unknown): value is QuestionPageSnapshot {
   return object(value) && text(value.documentKey) && text(value.scopeKey)
-    && ['chapter-test', 'homework', 'exam', 'unsupported'].includes(String(value.scene))
+    && ['chapter-test', 'homework', 'exam', 'zjooc-test', 'unsupported'].includes(String(value.scene))
     && list(value.questions, isQuestionSnapshot, 300) && typeof value.complete === 'boolean' && typeof value.allLoaded === 'boolean'
     && typeof value.canSave === 'boolean' && typeof value.canSubmit === 'boolean';
 }

@@ -1,11 +1,18 @@
 import type { AnswerPageCommand, AnswerPageResult, ApplicableAnswer, QuestionIdentity } from './types';
-import { chapterAction, inspectQuestionPage, normalizeText, readQuestionControl, readSavedProgramCode, visible, type PageInspection, type QuestionEntry } from './adapters/chaoxing';
+import { chapterAction, inspectQuestionPage as inspectChaoxingQuestionPage, readSavedProgramCode } from './adapters/chaoxing';
+import { normalizeText, readQuestionControl, visible, type PageInspection, type QuestionEntry } from './adapters/shared';
+import { inspectZjoocQuestionPage } from './adapters/zjooc';
+import { getDocumentPlatform } from '../../shared/sites';
 import { normalizeAnswer } from './normalize';
 import { prepareQuestionImages } from './images';
 import { prepareQuestionFont } from '../question-font';
 import { captureQuestionSnapshotMarkdown } from '../question-extract/snapshot';
 
 const operations = new WeakMap<Document, AbortController>();
+
+function inspectQuestionPage(win: Window): PageInspection {
+  return getDocumentPlatform(win)?.id === 'zjooc' ? inspectZjoocQuestionPage(win) : inspectChaoxingQuestionPage(win);
+}
 
 function locate(win: Window, identity: QuestionIdentity, readOnly = false): { inspection: PageInspection; entry: QuestionEntry } {
   const inspection = inspectQuestionPage(win);
@@ -47,8 +54,8 @@ async function waitForProgramSaved(win: Window, entry: QuestionEntry, code: stri
 }
 
 async function write(win: Window, command: Extract<AnswerPageCommand, { action: 'write' }>, signal: AbortSignal): Promise<AnswerPageResult> {
-  const { entry } = locate(win, command);
-  let current = readQuestionControl(win, entry);
+  const { entry, inspection } = locate(win, command);
+  let current = readQuestionControl(win, entry, inspection.snapshot.complete);
   if (!current.ready) throw new Error(current.error || '题目不可编辑。');
   if (current.version !== command.expectedVersion) throw new Error('答案已被修改，已保留你的编辑。');
   if (current.hasContent && !command.replace) throw new Error('题目已有答案，替换前需要明确授权。');
@@ -56,16 +63,18 @@ async function write(win: Window, command: Extract<AnswerPageCommand, { action: 
   if (!answer) throw new Error('答案无法完整且唯一地匹配当前题目，未执行填写。');
   function guard(): void {
     assertActive(signal);
-    const live = locate(win, command).entry;
-    const value = readQuestionControl(win, live);
+    const { entry: live, inspection: page } = locate(win, command);
+    const value = readQuestionControl(win, live, page.snapshot.complete);
     if (live.root !== entry.root || !value.ready || value.version !== current.version) throw new Error('题目或答案在填写期间变化，已停止后续填写。');
   }
-  function mutate(action: () => void, expected: ApplicableAnswer): void {
+  async function mutate(action: () => void, expected: ApplicableAnswer): Promise<void> {
     guard();
     action();
+    // Element UI applies Vue's radio-group changes after the native click event.
+    if (inspection.snapshot.scene === 'zjooc-test') await Promise.resolve();
     assertActive(signal);
-    const live = locate(win, command).entry;
-    const value = readQuestionControl(win, live);
+    const { entry: live, inspection: page } = locate(win, command);
+    const value = readQuestionControl(win, live, page.snapshot.complete);
     if (live.root !== entry.root || !value.ready || !sameAnswer(value.answer, expected)) throw new Error('填写后的控件状态不一致，已停止；请检查页面上的部分填写结果。');
     current = value;
   }
@@ -76,7 +85,7 @@ async function write(win: Window, command: Extract<AnswerPageCommand, { action: 
       const wanted = answer.choices.includes(choice.option.id);
       if (selected === wanted || (!multiple && !wanted)) continue;
       const next = multiple ? entry.choices.filter(item => item.option.id === choice.option.id ? wanted : current.answer.choices?.includes(item.option.id)).map(item => item.option.id) : [choice.option.id];
-      mutate(() => choice.element.click(), { choices: next });
+      await mutate(() => choice.element.click(), { choices: next });
     }
   } else if (answer.texts) {
     for (let index = 0; index < entry.texts.length; index += 1) {
@@ -84,7 +93,7 @@ async function write(win: Window, command: Extract<AnswerPageCommand, { action: 
       if (current.answer.texts?.[index] === normalizeText(text)) continue;
       const field = entry.texts[index];
       const next = [...current.answer.texts!]; next[index] = normalizeText(text);
-      mutate(() => {
+      await mutate(() => {
         if (field.editor) {
           field.editor.fireEvent('savescene');
           field.editor.setContent(plainTextHtml(text), false);
@@ -108,7 +117,7 @@ async function write(win: Window, command: Extract<AnswerPageCommand, { action: 
       const option = field.options.find(item => item.option.id === answer.matches![index]);
       if (!option) throw new Error('连线答案不存在，已停止填写。');
       const next = [...current.answer.matches!]; next[index] = option.option.id;
-      mutate(() => {
+      await mutate(() => {
         if (field.element.tagName === 'SELECT') {
           const prototype = (win as Window & typeof globalThis).HTMLSelectElement.prototype;
           Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(field.element, option.value);
@@ -124,14 +133,14 @@ async function write(win: Window, command: Extract<AnswerPageCommand, { action: 
       if (current.answer.children?.find(item => item.id === child.id)?.choices[0] === wanted) continue;
       const choice = child.choices.find(item => item.option.id === wanted)!;
       const next = current.answer.children!.map(item => item.id === child.id ? { id: child.id, choices: [wanted] } : item);
-      mutate(() => choice.element.click(), { children: next });
+      await mutate(() => choice.element.click(), { children: next });
     }
   } else if (answer.code !== undefined) {
     const code = answer.code;
     const editor = entry.program?.editor;
     if (!editor) throw new Error('编程编辑器未就绪，未写入代码。');
     if (code === entry.program?.template) throw new Error('生成的代码与页面初始模板相同，未写入；请重试本题。');
-    mutate(() => editor.setValue(code), { code });
+    await mutate(() => editor.setValue(code), { code });
   }
   guard();
   if (!sameAnswer(current.answer, answer) || !current.complete) throw new Error('答案回读不一致，未将该题标记为已填写。');
@@ -197,7 +206,7 @@ async function finish(win: Window, command: Extract<AnswerPageCommand, { action:
     if (command.expected.length !== inspection.entries.length || !command.expected.length || new Set(command.expected.map(item => item.key)).size !== command.expected.length) throw new Error('题目清单不一致，未执行保存或提交。');
     for (const entry of inspection.entries) {
       const expected = command.expected.find(item => item.key === entry.snapshot.key);
-      const state = readQuestionControl(win, entry);
+      const state = readQuestionControl(win, entry, page.complete);
       if (!expected || entry.snapshot.fingerprint !== expected.fingerprint || state.version !== expected.version) throw new Error('题目或答案已变化，未执行保存或提交。');
       if (command.policy === 'submit' && ((!state.ready && !page.complete) || !state.complete)) throw new Error('仍有未完成或不支持的题目，未提交。');
     }
@@ -231,14 +240,15 @@ async function finish(win: Window, command: Extract<AnswerPageCommand, { action:
   throw new Error('未收到明确的保存／提交成功反馈，已暂停；请在页面核对结果后继续。');
 }
 
-/** MAIN-world dispatcher. Secrets and external answer requests never enter this module. */
+/** Page dispatcher. Secrets and external answer requests never enter this module. */
 export async function handleAnswerPageCommand(win: Window, command: AnswerPageCommand): Promise<AnswerPageResult> {
   if (command.action === 'cancel') { operations.get(win.document)?.abort(); operations.delete(win.document); return { ok: true }; }
   try {
     if (command.action === 'inspect') {
-      await prepareQuestionFont(win.document);
+      const chaoxing = getDocumentPlatform(win)?.id === 'chaoxing';
+      if (chaoxing) await prepareQuestionFont(win.document);
       const inspection = inspectQuestionPage(win);
-      for (const entry of inspection.entries) {
+      for (const entry of chaoxing ? inspection.entries : []) {
         // Copy formatting is optional and cannot block the structured answer snapshot.
         try { entry.snapshot.markdown = captureQuestionSnapshotMarkdown(entry.snapshot, entry.root); }
         catch { /* Legacy structured snapshots remain fully usable for preview and answering. */ }
@@ -246,8 +256,8 @@ export async function handleAnswerPageCommand(win: Window, command: AnswerPageCo
       return { ok: true, snapshot: inspection.snapshot };
     }
     if (command.action === 'read') {
-      const { entry } = locate(win, command, true);
-      return { ok: true, control: readQuestionControl(win, entry) };
+      const { entry, inspection } = locate(win, command, true);
+      return { ok: true, control: readQuestionControl(win, entry, inspection.snapshot.complete) };
     }
     if (operations.has(win.document)) throw new Error('当前题目页面仍有操作进行中，请先停止。');
     const abort = new AbortController();
@@ -255,15 +265,15 @@ export async function handleAnswerPageCommand(win: Window, command: AnswerPageCo
     try {
       if (command.action === 'write') return await write(win, command, abort.signal);
       if (command.action === 'finish') return await finish(win, command, abort.signal);
-      const { entry } = locate(win, command);
-      const before = readQuestionControl(win, entry);
+      const { entry, inspection } = locate(win, command);
+      const before = readQuestionControl(win, entry, inspection.snapshot.complete);
       if (!before.ready) throw new Error(before.error || '当前题目不可处理。');
       const timeout = win.setTimeout(() => abort.abort(), 15000);
       try {
         const prepared = await prepareQuestionImages(win, entry.root, entry.snapshot, abort.signal);
         assertActive(abort.signal);
-        const after = locate(win, command).entry;
-        if (after.root !== entry.root || readQuestionControl(win, after).version !== before.version) throw new Error('图片读取期间题目或答案已变化，请重试。');
+        const { entry: after, inspection: live } = locate(win, command);
+        if (after.root !== entry.root || readQuestionControl(win, after, live.snapshot.complete).version !== before.version) throw new Error('图片读取期间题目或答案已变化，请重试。');
         return { ok: true, prepared };
       } finally { win.clearTimeout(timeout); }
     } finally { if (operations.get(win.document) === abort) operations.delete(win.document); }

@@ -27,6 +27,7 @@ import {
 } from '../features/question-answer/client';
 import { createQuestionAnswerController, type ChapterAnswerController } from '../features/question-answer/controller';
 import { canPreviewQuestions } from '../features/question-answer/permissions';
+import { createZjoocAnswerRuntime } from '../features/question-answer/zjooc-client';
 import { subscribeQuestionBankStatus } from '../features/question-bank/client';
 import { readAnswerPacing, subscribeAnswerPacing } from '../features/answer-pacing/client';
 import { createFillPacer } from '../features/answer-pacing/scheduler';
@@ -45,6 +46,7 @@ function install(): void {
   let questionAnswer: ChapterAnswerController | undefined;
   let study: StudyController | undefined;
   let zjoocStudy: ZjoocStudyController | undefined;
+  const answerEnabled = () => loaded && isFeatureEnabled(settings, 'question-answer');
 
   function apply(next: Settings): void {
     const aiChanged = settings.enabled !== next.enabled || settings.features['ai-answer'] !== next.features['ai-answer'];
@@ -53,7 +55,7 @@ function install(): void {
     loaded = true;
     revision += 1;
     status = { ready: platform.id === 'zjooc', enabled: settings.enabled,
-      activeFeatures: platform.id === 'zjooc' && isFeatureEnabled(settings, 'zjooc-study') ? ['zjooc-study'] : [], errors: [] };
+      activeFeatures: platform.id === 'zjooc' ? (['zjooc-study', 'question-answer'] as const).filter(id => isFeatureEnabled(settings, id)) : [], errors: [] };
     bridge?.send(bridgeMessage({ kind: 'apply', revision, settings }));
     if (aiChanged) ai?.settingsChanged();
     if (answerChanged) questionAnswer?.settingsChanged();
@@ -80,6 +82,7 @@ function install(): void {
   const editorClient = bridge ? createEditorClient(bridge) : undefined;
   const studyClient = bridge ? createStudyFrameClient(bridge, () => loaded ? settings : undefined) : undefined;
   const answerClient = bridge ? createQuestionAnswerClient(bridge, () => loaded ? settings : undefined, window) : undefined;
+  const answerRuntime = answerClient?.runtime ?? (platform.id === 'zjooc' ? createZjoocAnswerRuntime(window, answerEnabled) : undefined);
   subscribeSettings((next) => { storageEvents += 1; apply(next); });
   const startEvents = storageEvents;
   const initialSettings = readSettings().then((next) => {
@@ -88,18 +91,20 @@ function install(): void {
   if (platform.id === 'chaoxing') installQuestionExtraction(() => loaded ? settings : undefined, initialSettings);
 
   if (window === window.top) {
-    if (platform.id === 'chaoxing' && studyClient && editorClient && answerClient) {
-      const waitBeforeFill = createFillPacer({ minimum: async () => (await readAnswerPacing()).minimumQuestionMs });
+    const waitBeforeFill = createFillPacer({ minimum: async () => (await readAnswerPacing()).minimumQuestionMs });
+    if (answerRuntime) {
       questionAnswer = createQuestionAnswerController({
-        runtime: answerClient.runtime,
-        isEnabled: () => loaded && isFeatureEnabled(settings, 'question-answer'),
-        canPreview: () => loaded && canPreviewQuestions(settings),
+        runtime: answerRuntime,
+        isEnabled: answerEnabled,
+        canPreview: () => platform.id === 'zjooc' ? answerEnabled() : loaded && canPreviewQuestions(settings),
         getSources: getAnswerSourcesStatus,
         saveSource: saveAnswerSource,
         generate: generateQuestionAnswer,
         review: reviewQuestionAnswers,
         waitBeforeFill,
       });
+    }
+    if (platform.id === 'chaoxing' && studyClient && editorClient && questionAnswer) {
       const answer = questionAnswer;
       study = createStudyController({ document, isEnabled: () => loaded && isFeatureEnabled(settings, 'chapter-study'), runtime: studyClient.runtime,
         chapterTestHandler: async (target, context) => {
@@ -144,7 +149,7 @@ function install(): void {
       saveUiPreferences: writeUiPreferences,
       version: chrome.runtime.getManifest().version,
     });
-    if (platform.id === 'chaoxing') {
+    if (questionAnswer) {
       subscribeApiStatus(() => { ai?.settingsChanged(); questionAnswer?.settingsChanged(); floatingPanel?.update(settings); });
       subscribeQuestionBankStatus(() => { questionAnswer?.settingsChanged(); floatingPanel?.update(settings); });
       subscribeAnswerSource(() => { questionAnswer?.settingsChanged(); floatingPanel?.update(settings); });
@@ -153,7 +158,7 @@ function install(): void {
     subscribeUiPreferences((preferences) => floatingPanel?.updatePreferences?.(preferences));
   }
 
-  window.addEventListener('pagehide', () => { questionAnswer?.stop(); answerClient?.runtime.cancel(); });
+  window.addEventListener('pagehide', () => { if (questionAnswer) questionAnswer.stop(); else answerRuntime?.cancel(); });
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id) return;

@@ -54,7 +54,7 @@ export function clearStoredLocalBank(): Promise<void> {
 
 /** Only the extension's isolated top-page client can request this data; nothing crosses the page bridge. */
 export const localQuestionBankRoutes: BackgroundRoutes = {
-  'toolbox:local-question-bank:read': { access: 'top-page', platforms: ['chaoxing'], handle: async () => readStoredLocalBank() },
-  'toolbox:local-question-bank:save': { access: 'top-page', platforms: ['chaoxing'], handle: async message => saveStoredLocalBank(message.entries) },
-  'toolbox:local-question-bank:clear': { access: 'top-page', platforms: ['chaoxing'], handle: async () => clearStoredLocalBank() },
+  'toolbox:local-question-bank:read': { access: 'top-page', platforms: ['chaoxing', 'zjooc'], handle: async () => readStoredLocalBank() },
+  'toolbox:local-question-bank:save': { access: 'top-page', platforms: ['chaoxing', 'zjooc'], handle: async message => saveStoredLocalBank(message.entries) },
+  'toolbox:local-question-bank:clear': { access: 'top-page', platforms: ['chaoxing', 'zjooc'], handle: async () => clearStoredLocalBank() },
 };

@@ -1,8 +1,9 @@
 import { isThinkLadderUrl } from '../features/ai-answer/adapters/think-ladder';
 import { isChapterStudyUrl } from '../features/chapter-study/adapters/chapter';
+import { hasZjoocQuestionPage, hasZjoocReviewPage, ZJOOC_QUESTION_PAGE_MARKERS } from '../features/question-answer/adapters/zjooc';
 import { isPlatformUrl } from '../shared/sites';
 
-export type PageContext = 'chapter' | 'homework' | 'exam' | 'think-ladder' | 'generic';
+export type PageContext = 'chapter' | 'homework' | 'exam' | 'think-ladder' | 'zjooc-test' | 'zjooc-review' | 'generic';
 
 const PAGE_MARKERS = '#coursetree, #fanyaMarking, #submitForm, #realApp, #chatScroll, .questionLi, input[name="workAnswerId"], iframe';
 const PAGE_IDS = new Set(['coursetree', 'fanyaMarking', 'submitForm', 'realApp', 'chatScroll']);
@@ -36,6 +37,20 @@ function changesPageStructure(record: MutationRecord): boolean {
   }
 }
 
+function containsZjoocPageMarker(node: Node): boolean {
+  if (node.nodeType !== 1) return false;
+  const element = node as Element;
+  return element.matches(ZJOOC_QUESTION_PAGE_MARKERS) || Boolean(element.querySelector(ZJOOC_QUESTION_PAGE_MARKERS));
+}
+
+function changesZjoocPageStructure(record: MutationRecord): boolean {
+  if (record.type === 'childList') {
+    return [...record.addedNodes, ...record.removedNodes].some(containsZjoocPageMarker)
+      || (record.target.nodeType === 1 && (record.target as Element).matches(ZJOOC_QUESTION_PAGE_MARKERS));
+  }
+  return containsZjoocPageMarker(record.target);
+}
+
 export function isHomeworkUrl(value: string): boolean {
   if (!isPlatformUrl(value, 'chaoxing')) return false;
   try {
@@ -59,6 +74,10 @@ export function pageContextFromUrl(value: string): PageContext {
 
 /** Known work routes and work-specific markup, including accessible embedded pages. */
 export function readPageContext(doc: Document): PageContext {
+  if (isPlatformUrl(doc.location?.href ?? doc.URL, 'zjooc')) {
+    if (hasZjoocQuestionPage(doc)) return 'zjooc-test';
+    return hasZjoocReviewPage(doc) ? 'zjooc-review' : 'generic';
+  }
   const visited = new Set<Document>();
   function inspect(current: Document, depth: number): PageContext {
     if (visited.has(current) || depth > 3) return 'generic';
@@ -95,11 +114,14 @@ export function readPageContext(doc: Document): PageContext {
 }
 
 export function pageToolsTitle(context: PageContext): string {
-  return context === 'chapter' ? '章节学习' : context === 'exam' ? '考试' : context === 'homework' ? '作业' : context === 'think-ladder' ? '思维阶梯' : '页面工具';
+  return context === 'chapter' ? '章节学习' : context === 'exam' ? '考试' : context === 'homework' ? '作业'
+    : context === 'think-ladder' ? '思维阶梯' : context === 'zjooc-test' ? '阶段测试'
+      : context === 'zjooc-review' ? '批阅题库' : '页面工具';
 }
 
 /** Reclassify late page/frame content; callers decide whether navigation may change. */
 export function observePageContext(doc: Document, changed: (context: PageContext) => void): () => void {
+  const zjooc = isPlatformUrl(doc.location?.href ?? doc.URL, 'zjooc');
   const observers = new Map<Document, MutationObserver>();
   let context = readPageContext(doc);
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -123,11 +145,13 @@ export function observePageContext(doc: Document, changed: (context: PageContext
       if (depth > 3 || currentDocuments.has(current)) return;
       currentDocuments.add(current);
       if (!observers.has(current)) {
-        const observer = new MutationObserver((records) => { if (records.some(changesPageStructure)) schedule(); });
-        observer.observe(current, { childList: true, subtree: true, attributes: true, attributeOldValue: true, attributeFilter: ['src', 'action', 'class', 'id', 'name'] });
+        const observer = new MutationObserver(records => { if (records.some(zjooc ? changesZjoocPageStructure : changesPageStructure)) schedule(); });
+        observer.observe(current, { childList: true, subtree: true, attributes: true, attributeOldValue: !zjooc,
+          attributeFilter: zjooc ? ['class', 'style', 'hidden', 'aria-hidden'] : ['src', 'action', 'class', 'id', 'name'] });
         observers.set(current, observer);
-        current.addEventListener('load', onLoad, true);
+        if (!zjooc) current.addEventListener('load', onLoad, true);
       }
+      if (zjooc) return;
       for (const frame of current.querySelectorAll('iframe')) {
         if (isEditorContent(frame)) continue;
         try { if (frame.contentDocument) visit(frame.contentDocument, depth + 1); }

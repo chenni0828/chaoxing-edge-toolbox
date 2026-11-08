@@ -51,7 +51,7 @@ export const questionBankRoutes: BackgroundRoutes = {
 };
 
 export function subscribeStoredQuestionBank(): void {
-  const changed = () => { void broadcastPublic({ type: 'toolbox:question-bank:changed' }, ['chaoxing']); };
+  const changed = () => { void broadcastPublic({ type: 'toolbox:question-bank:changed' }, ['chaoxing', 'zjooc']); };
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes[QUESTION_BANK_SETTINGS_KEY]) changed();
   });

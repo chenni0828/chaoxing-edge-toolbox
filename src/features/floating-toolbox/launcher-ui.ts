@@ -61,7 +61,7 @@ export function mountToolboxLauncher(root: HTMLElement): () => void {
         ? zjooc ? '浙学平台' : ladder ? '思维阶梯练习页' : homework ? '学习通作业页' : '学习通网页'
         : '当前页面不支持';
       pageDetails.textContent = supported
-        ? zjooc ? '在课程学习详情页启用自动学习，视频使用平台最高倍速，并处理课件“完成学习”。'
+        ? zjooc ? '阶段测试页可用题库和 AI 答题；批阅页可提取题库；课程学习详情页可启用自动学习。'
           : ladder ? '“答题”中生成并填入简答题回答；“思维阶梯”中粘贴、提取题目。'
           : homework ? '在“作业”工作区允许粘贴、提取题目；AI 作答目前仅支持思维阶梯。'
             : '可打开页面工具，使用允许粘贴与题目提取，题目以页面识别结果为准。'

@@ -89,6 +89,22 @@ export function sanitizeBankEntry(value: unknown, index = 0): BankEntry {
   return { question: structuredClone(question), answer };
 }
 
+export function exchangeQuestionData({ kind, stem, options, fields, children, images, program }: QuestionSnapshot) {
+  return { kind, stem, options, fields, children, images, ...(program ? { program } : {}) };
+}
+
+/** Export the same portable format accepted by the existing paste and file import. */
+export function serializeBankPack(entries: BankEntry[]): string {
+  if (!entries.length || entries.length > EXCHANGE_MAX_ITEMS) throw new Error(`每份题库 JSON 须包含 1 至 ${EXCHANGE_MAX_ITEMS} 道题。`);
+  const items = entries.map((entry, index) => {
+    const { question, answer } = sanitizeBankEntry(entry, index);
+    return { question: exchangeQuestionData(question), answer };
+  });
+  const text = JSON.stringify({ version: EXCHANGE_VERSION, mode: 'bank', items });
+  if (new TextEncoder().encode(text).byteLength > EXCHANGE_MAX_LENGTH) throw new Error('题库 JSON 超过 2 MB，可直接存入本地题库。');
+  return text;
+}
+
 export function parseExchangePack(text: string): ExchangePack {
   if (text.length > EXCHANGE_MAX_LENGTH) throw new Error('导入内容过长，请分批导入。');
   const source = text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i, '$1').trim();

@@ -286,7 +286,8 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
       const frame = scope[0];
       if (!frame.snapshot.allLoaded) {
         const saveLabel = frame.snapshot.scene === 'chapter-test' ? '保存' : '暂时保存';
-        throw new Error(`尚未核实整卷题量或页面仍有分页，不能发送整卷复检。请先在页面点「${saveLabel}」再刷新阅览。`);
+        const reloadHint = frame.snapshot.scene === 'zjooc-test' ? '请等题目加载完成后刷新阅览。' : `请先在页面点「${saveLabel}」再刷新阅览。`;
+        throw new Error(`尚未核实整卷题量或页面仍有分页，不能发送整卷复检。${reloadHint}`);
       }
       if (frame.snapshot.complete) throw new Error('平台已显示本卷完成，不能再编辑复检；请核对页面状态。');
       const rows = publishScope([frame]);
@@ -465,7 +466,11 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
         activeId = undefined;
       }
       check(current);
-      if (!current.chapter) { emit({ phase: 'complete', message: '本轮填写结束，请检查答案后自行保存或提交。' }); return; }
+      if (!current.chapter) {
+        emit({ phase: 'complete', message: scope.some(frame => frame.snapshot.scene === 'zjooc-test')
+          ? '本轮填写结束，请核对答案，再在浙学页面手动提交。' : '本轮填写结束，请检查答案后自行保存或提交。' });
+        return;
+      }
       if (current.policy === 'stay') {
         emit({ phase: 'complete', message: '章节测验填写结束，已停留等待检查。' });
         return { status: 'attention', message: '章节测验已填写，请检查后手动保存或提交。' };

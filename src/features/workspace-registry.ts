@@ -19,7 +19,9 @@ import { createZjoocStudyView } from './zjooc-study/ui';
 import { zjoocStudyStyles } from './zjooc-study/styles';
 import type { ZjoocStudyController } from './zjooc-study/types';
 import type { QuestionAnswerController } from './question-answer/types';
+import { createQuestionAnswerView } from './question-answer/ui';
 import { questionAnswerStyles } from './question-answer/styles';
+import { createPageBankExchangeView } from './answer-exchange/ui';
 import { answerExchangeStyles } from './answer-exchange/styles';
 
 export interface WorkspaceView {
@@ -51,7 +53,7 @@ export const WORKSPACES: ReadonlyArray<{
   icon: 'extract' | 'ai' | 'study';
   defaultOnPage?(url: string): boolean;
   visibleOnPage?(context: PageContext): boolean;
-  create(context: WorkspaceContext): WorkspaceView;
+  create(context: WorkspaceContext, scene: PageContext): WorkspaceView;
 }> = [
   { id: 'page-tools', platform: 'chaoxing', title: '页面工具', titleOnPage: pageToolsTitle, icon: 'extract', visibleOnPage: scene => scene !== 'chapter' && scene !== 'think-ladder', create: createPageToolsView },
   { id: 'answer', platform: 'chaoxing', title: '思维阶梯', icon: 'ai', visibleOnPage: scene => scene === 'think-ladder', defaultOnPage: isThinkLadderUrl, create(context) {
@@ -66,7 +68,13 @@ export const WORKSPACES: ReadonlyArray<{
     if (!context.study) throw new Error('Missing Chaoxing study controller');
     return createChapterStudyView({ ...context, study: context.study });
   } },
-  { id: 'zjooc-study', platform: 'zjooc', title: '章节学习', icon: 'study', create: createZjoocStudyView },
+  { id: 'page-tools', platform: 'zjooc', title: '阶段测试', titleOnPage: pageToolsTitle, icon: 'ai',
+    visibleOnPage: scene => scene === 'zjooc-test' || scene === 'zjooc-review', create(context, scene) {
+    if (scene === 'zjooc-review') return createPageBankExchangeView();
+    if (!context.questionAnswer) throw new Error('Missing Zjooc answer controller');
+    return createQuestionAnswerView({ answer: context.questionAnswer, openSettings: context.openSettings, title: '阶段测试', scene: 'zjooc-test' });
+  } },
+  { id: 'zjooc-study', platform: 'zjooc', title: '章节学习', icon: 'study', visibleOnPage: scene => scene === 'generic', create: createZjoocStudyView },
 ];
 
 export function getWorkspaces(platformId?: PlatformId, context?: PageContext): typeof WORKSPACES {

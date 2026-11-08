@@ -1,4 +1,4 @@
-import { broadcastPublic, privateStorageReady, type BackgroundRoutes } from '../../core/background-context';
+import { broadcastPublic, privateStorageReady, senderPlatform, type BackgroundRoutes } from '../../core/background-context';
 import { createRequestPacer, type Provider } from './scheduler';
 import { normalizeAnswerPacing, PACING_SETTINGS_KEY, validateAnswerPacing } from './types';
 
@@ -37,7 +37,10 @@ export async function waitForProvider(source: Provider, signal: AbortSignal, onW
 }
 
 export const pacingRoutes: BackgroundRoutes = {
-  'toolbox:answer-pacing:read': { access: 'public', platforms: ['chaoxing'], handle: readStoredPacing },
+  'toolbox:answer-pacing:read': { access: 'public', platforms: ['chaoxing', 'zjooc'], handle: async (_message, sender) => {
+    if (senderPlatform(sender) === 'zjooc' && sender.frameId !== 0) throw new Error('仅浙学顶层页面可读取答题节奏。');
+    return readStoredPacing();
+  } },
   'toolbox:answer-pacing:save': { access: 'options', handle: async message => {
     validateAnswerPacing(message.preferences);
     await privateStorageReady;
@@ -47,6 +50,6 @@ export const pacingRoutes: BackgroundRoutes = {
 
 export function subscribeStoredPacing(): void {
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes[PACING_SETTINGS_KEY]) void broadcastPublic({ type: 'toolbox:answer-pacing:changed' }, ['chaoxing']);
+    if (area === 'local' && changes[PACING_SETTINGS_KEY]) void broadcastPublic({ type: 'toolbox:answer-pacing:changed' }, ['chaoxing', 'zjooc']);
   });
 }

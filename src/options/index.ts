@@ -55,7 +55,7 @@ function navigate(section: SettingsSection): void {
     if (id === section) link?.setAttribute('aria-current', 'page');
     else link?.removeAttribute('aria-current');
   }
-  const titles: Record<SettingsSection, string> = { api: '学习通 API 设置', 'question-bank': '言溪题库设置', features: '功能设置', floating: '悬浮框设置' };
+  const titles: Record<SettingsSection, string> = { api: 'API 设置', 'question-bank': '言溪题库设置', features: '功能设置', floating: '悬浮框设置' };
   document.title = `${titles[section]} · 学习工具箱`;
 }
 

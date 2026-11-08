@@ -45,8 +45,10 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
   if (activePanel) return activePanel;
   const platform = dependencies.platform ?? getPlatform(location.href);
   if (!platform) return { update() {}, updatePreferences() {}, open() {}, dispose() {} };
+  const zjooc = platform.id === 'zjooc';
   const workspaces = getWorkspaces(platform.id);
-  const singleWorkspace = workspaces.length === 1;
+  // Each Zjooc page has a single workspace based on its current scene.
+  const singleWorkspace = zjooc || workspaces.length === 1;
   const listeners = new AbortController();
   const { signal } = listeners;
   const host = document.createElement('div');
@@ -106,15 +108,15 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
   const status = find<HTMLElement>('[data-status]');
   const notice = find<HTMLElement>('.shell-message');
   const miniNotice = find<HTMLElement>('.mini-notice');
+  const privacyNote = find('.privacy-note');
   const aiIcon = root.querySelector<HTMLButtonElement>('[data-view="answer"]');
   find('.header-title').textContent = `工具箱 · ${platform.label}`;
   find('.panel').setAttribute('aria-label', `学习工具箱 · ${platform.label}`);
-  if (platform.id === 'zjooc') find('.privacy-note').textContent = '完成情况以平台标记为准。';
   find('.header-version').textContent = `v${dependencies.version}`;
   find('.header-version').title = `当前版本 v${dependencies.version}`;
   let settings = dependencies.getSettings();
   let minimized = true;
-  let pageContext = platform.id === 'chaoxing' ? readPageContext(document) : 'generic' as const;
+  let pageContext = readPageContext(document);
   let activeView = resolveSceneWorkspace(platform.id, pageContext);
   let saving = false;
   let disposed = false;
@@ -165,7 +167,7 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
         getSettings: () => settings, saveSettings, extract: dependencies.extract,
         getApiStatus: dependencies.getApiStatus, openSettings: dependencies.openSettings,
         ai: dependencies.ai, questionAnswer: dependencies.questionAnswer, study: dependencies.study, zjoocStudy: dependencies.zjoocStudy,
-      });
+      }, pageContext);
       view.element.id = `cx-view-${activeView}`;
       if (!singleWorkspace) {
         view.element.setAttribute('role', 'tabpanel');
@@ -211,6 +213,9 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
     }
     status.textContent = saving ? '正在保存…' : !settings ? '正在读取设置…' : settings.enabled ? '工具箱已开启' : '工具箱已暂停';
     status.dataset.state = saving ? 'saving' : !settings ? 'loading' : settings.enabled ? 'enabled' : 'paused';
+    if (zjooc) privacyNote.textContent = pageContext === 'zjooc-test'
+      ? '题目与回答默认保留在本页内存。' : pageContext === 'zjooc-review'
+        ? '确认存入本地题库后，条目保存在本机。' : '完成情况以平台标记为准。';
     for (const tab of root.querySelectorAll<HTMLButtonElement>('[data-view]')) {
       const descriptor = workspaces.find((workspace) => workspace.id === tab.dataset.view)!;
       tab.hidden = Boolean(descriptor.visibleOnPage && !descriptor.visibleOnPage(pageContext));
@@ -299,18 +304,18 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
     root.querySelector<HTMLButtonElement>(`[data-view="${view}"]`)?.focus({ preventScroll: true });
   }, { signal });
   window.addEventListener('popstate', () => {
-    pageContext = platform.id === 'chaoxing' ? readPageContext(document) : 'generic';
+    pageContext = readPageContext(document);
     activeView = resolveSceneWorkspace(platform.id, pageContext);
     render();
     if (!minimized) views.get(activeView)?.refresh?.();
   }, { signal });
   const unsubscribeAi = aiIcon ? dependencies.ai?.subscribe((state) => { aiIcon.dataset.running = String(state.running); }) : undefined;
-  const unsubscribePage = platform.id === 'chaoxing' ? observePageContext(document, (context) => {
+  const unsubscribePage = observePageContext(document, (context) => {
     pageContext = context;
     activeView = resolveSceneWorkspace(platform.id, pageContext);
     render();
     if (!minimized) views.get(activeView)?.refresh?.();
-  }) : undefined;
+  });
 
   function mount(): void {
     if (disposed || host.isConnected || !document.body) return;
@@ -332,7 +337,7 @@ export function installFloatingPanel(dependencies: FloatingPanelDependencies): F
       listeners.abort();
       observer?.disconnect();
       unsubscribeAi?.();
-      unsubscribePage?.();
+      unsubscribePage();
       drawerAnimation?.cancel();
       container.dispose();
       for (const view of views.values()) view.dispose();

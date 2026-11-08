@@ -1,4 +1,4 @@
-import { broadcastPublic, privateStorageReady, type BackgroundRoutes } from '../../core/background-context';
+import { broadcastPublic, privateStorageReady, senderPlatform, type BackgroundRoutes } from '../../core/background-context';
 import { readApiStatus } from '../api-settings/background';
 import { readQuestionBankStatus } from '../question-bank/background';
 import { readStoredSettings } from '../toolbox-settings/background';
@@ -32,11 +32,12 @@ export async function readAnswerSourcesStatus(): Promise<AnswerSourcesStatus> {
 }
 
 export const answerSourceRoutes: BackgroundRoutes = {
-  'toolbox:question-answer:sources': { access: 'public', platforms: ['chaoxing'], handle: async () => {
+  'toolbox:question-answer:sources': { access: 'public', platforms: ['chaoxing', 'zjooc'], handle: async (_message, sender) => {
+    if (senderPlatform(sender) === 'zjooc' && sender.frameId !== 0) throw new Error('仅浙学顶层页面可读取答题来源。');
     try { return await readAnswerSourcesStatus(); }
     catch { throw new Error('无法读取答题来源配置，请重新检查；若仍失败，请重新加载扩展并刷新页面。'); }
   } },
-  'toolbox:question-answer:select-source': { access: 'top-page', platforms: ['chaoxing'], handle: async message => {
+  'toolbox:question-answer:select-source': { access: 'top-page', platforms: ['chaoxing', 'zjooc'], handle: async message => {
     if (!isSource(message.source)) throw new Error('请选择有效的答题来源。');
     await privateStorageReady;
     await chrome.storage.local.set({ [ANSWER_PREFERENCES_KEY]: { version: 1, source: message.source } });
@@ -46,7 +47,7 @@ export const answerSourceRoutes: BackgroundRoutes = {
 export function subscribeStoredAnswerSource(): void {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes[ANSWER_PREFERENCES_KEY]) {
-      void broadcastPublic({ type: 'toolbox:question-answer:source-changed' }, ['chaoxing']);
+      void broadcastPublic({ type: 'toolbox:question-answer:source-changed' }, ['chaoxing', 'zjooc']);
     }
   });
 }

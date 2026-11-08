@@ -1,5 +1,5 @@
 import type { PreparedQuestion, QuestionSnapshot } from './types';
-import { imageAddress } from './adapters/chaoxing';
+import { imageAddress } from './adapters/shared';
 import { questionOptionsText } from './normalize';
 
 const MAX_IMAGE_BYTES = 2_900_000;
