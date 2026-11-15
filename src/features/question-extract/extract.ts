@@ -14,7 +14,7 @@ export type ExtractedQuestion = {
 const CONTAINERS = '.questionLi, .TiMu, .question-item, .questionItem';
 const STEMS = '.mark_name, .Zy_TItle, .question-title, .questionTitle';
 const OPTIONS = '.mark_letter, .Zy_ulTop, .question-options, .questionOptions';
-const SUPPLEMENTS = '.reading_answer, .filling_answer, .firstUlList, .secondUlList';
+const SUPPLEMENTS = '.reading_answer, .filling_answer, .firstUlList, .secondUlList, .line_wid_half.fl, .line_wid_half.fr';
 const EXCLUDED = [
   'script', 'style', 'noscript', 'template', 'iframe', 'object', 'embed',
   'textarea', 'select', 'button', 'canvas', 'svg', 'audio', 'video',

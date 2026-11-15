@@ -1,4 +1,4 @@
-import type { StudyTarget, StudyTaskOutcome } from '../chapter-study/types';
+import type { ChapterTestOutcome, StudyTarget } from '../chapter-study/types';
 import type { AnswerRuntime } from './client';
 import type { AnswerFrameSnapshot } from './background';
 import { planAnswerSource } from './source-status';
@@ -24,7 +24,7 @@ interface Dependencies {
   watchInterval?: number;
 }
 export interface ChapterAnswerController extends QuestionAnswerController {
-  runChapter(target: StudyTarget, signal: AbortSignal, policy: CompletionPolicy): Promise<StudyTaskOutcome>;
+  runChapter(target: StudyTarget, signal: AbortSignal, policy: CompletionPolicy): Promise<ChapterTestOutcome>;
 }
 interface Run {
   abort: AbortController; chapter?: StudyTarget; policy?: CompletionPolicy; onlyId?: string; replace?: boolean;
@@ -225,10 +225,19 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
         if (!answer) throw new Error('导入答案未通过题型与选项核对，未填写。');
         result = { status: 'answer', source: current.importSource ?? 'import', text: JSON.stringify(answer), answer };
       } else {
-        const prepared: PreparedQuestion = target.question.images.length
-          ? (await page(current, target, { action: 'images', ...identity(target) })).prepared!
-          : { question: target.question, images: [], suggestionTitle: '', suggestionOptions: '' };
-        if (!prepared) throw new Error('图片未能完整读取，本题未请求答案。');
+        let prepared: PreparedQuestion = { question: target.question, images: [], suggestionTitle: '', suggestionOptions: '' };
+        if (target.question.images.length) {
+          try {
+            const { prepared: withImages } = await page(current, target, { action: 'images', ...identity(target) });
+            if (!withImages) throw new Error('图片未能完整读取，本题未请求答案。');
+            prepared = withImages;
+          } catch (error) {
+            const live = await read(current, target);
+            if (!live.ready || live.version !== before.version) throw error;
+            updateRow(row.id, { phase: 'needs-review', message: error instanceof Error ? error.message : '图片未能读取。' });
+            return;
+          }
+        }
         result = await deps.generate(prepared, source!, current.abort.signal, text => {
           if (run === current && !current.abort.signal.aborted) updateRow(row.id, { text });
         }, message => { if (run === current && !current.abort.signal.aborted) updateRow(row.id, { message }); });
@@ -398,7 +407,7 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
     }
   }
 
-  async function execute(current: Run): Promise<StudyTaskOutcome | undefined> {
+  async function execute(current: Run): Promise<ChapterTestOutcome | undefined> {
     if (run) throw new Error('当前已有答题任务，请先暂停。');
     if (state.sourceSaving) throw new Error('正在保存答题来源，请稍后继续。');
     if (!deps.isEnabled()) throw new Error('请先开启批量答题功能。');
@@ -504,10 +513,13 @@ export function createQuestionAnswerController(deps: Dependencies): ChapterAnswe
       return { status: 'acted', message, chapterIncomplete: saved };
     } catch (error) {
       const message = current.invalidated ? '题目页面已更换，请重新读取题目。' : error instanceof Error ? error.message : '答题失败，请检查页面。';
-      if (state.completion === 'saving' || state.completion === 'submitting') emit({ completion: 'unconfirmed' });
+      const draftSaveUnconfirmed = state.completion === 'saving';
+      if (draftSaveUnconfirmed || state.completion === 'submitting') emit({ completion: 'unconfirmed' });
       if (activeId) updateRow(activeId, { phase: current.abort.signal.aborted && message === '答题已暂停。' ? 'pending' : 'error', message });
       emit({ phase: current.abort.signal.aborted ? 'paused' : 'error', message });
-      if (current.chapter) return { status: 'attention', message };
+      if (current.chapter) return draftSaveUnconfirmed
+        ? { status: 'attention', message: '暂时保存结果未确认，请先核对平台草稿，再继续章节学习。', draftSaveUnconfirmed: true }
+        : { status: 'attention', message };
     } finally {
       if (run === current) { run = undefined; current.abort.abort(); deps.runtime.cancel(); emit({ running: false }); }
     }

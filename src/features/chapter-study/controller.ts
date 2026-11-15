@@ -1,11 +1,11 @@
 import { observeChapterPage, readChapterPage, type ChapterPageSnapshot } from './adapters/chapter';
 import {
   defaultStudyPreferences, normalizeStudyPreferences,
-  type StudyController, type StudyPreferences, type StudyRuntime, type StudySession, type StudyState, type StudyTarget, type StudyTaskOutcome, type StudyNotice,
+  type ChapterTestOutcome, type StudyController, type StudyPreferences, type StudyRuntime, type StudySession, type StudyState, type StudyTarget, type StudyNotice,
 } from './types';
 
 export interface ChapterTestHandlerContext { runId: string; signal: AbortSignal; preferences: StudyPreferences; startedByUser: boolean }
-export type ChapterTestHandler = (target: StudyTarget, context: ChapterTestHandlerContext) => Promise<StudyTaskOutcome>;
+export type ChapterTestHandler = (target: StudyTarget, context: ChapterTestHandlerContext) => Promise<ChapterTestOutcome>;
 export interface StudyDependencies {
   document: Document;
   isEnabled(): boolean;
@@ -175,6 +175,7 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
   async function runCard(current: Worker, title: string): Promise<boolean> {
     const signal = current.abort.signal;
     const done = new Set<string>();
+    const savedQuizzes = new Set<string>();
     let deadline = Date.now() + 15000;
     let emptyReady = 0;
     let skippedQuiz = false;
@@ -184,7 +185,8 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
       const scan = await runtime.scan(signal);
       assertCurrent(current);
       const playerWarning = scan.warnings.find(message => /倍速|播放器/.test(message));
-      const targets = scan.targets.filter(target => !done.has(targetIdentity(target)));
+      const targets = scan.targets.filter(target => !done.has(targetIdentity(target))
+        && !(target.type === 'chapter-test' && savedQuizzes.has(target.key)));
       if (!targets.length) {
         if (scan.cardReady) {
           emptyReady += 1;
@@ -205,6 +207,16 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
           const outcome = await handleChapterTest(target, { runId: current.runId, signal, preferences: { ...preferences }, startedByUser: session?.startedByUser === true });
           assertCurrent(current);
           deadline = Date.now() + 15000;
+          // Saving can reload the quiz frame without changing the underlying task.
+          if (outcome.draftSaveUnconfirmed) throw new Attention(outcome.message);
+          if (outcome.status === 'acted' && outcome.chapterIncomplete) {
+            savedQuizzes.add(target.key);
+            skippedQuiz = true;
+            recordSkip(`${title}：${target.title || '章节测验'}（已保存、待提交）`);
+            emit({ message: outcome.message, taskType: target.type });
+            current.stage = 'scan';
+            break;
+          }
           const live = await runtime.scan(signal);
           assertCurrent(current);
           if (!live.targets.some(value => targetIdentity(value) === targetIdentity(target))) { current.stage = 'scan'; break; }
@@ -213,11 +225,6 @@ export function createStudyController({ document: doc, isEnabled, runtime, chapt
             skippedQuiz = true;
             recordSkip(`${title}：${target.title || '章节测验'}（需手动完成）`);
             emit({ message: '已记录章节测验，继续处理其他学习内容。', taskType: target.type });
-          }
-          if (outcome.chapterIncomplete) {
-            skippedQuiz = true;
-            recordSkip(`${title}：${target.title || '章节测验'}（已保存、待提交）`);
-            emit({ message: outcome.message, taskType: target.type });
           }
           done.add(targetIdentity(target));
           current.stage = 'scan';

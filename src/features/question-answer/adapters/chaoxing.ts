@@ -178,7 +178,8 @@ function entryFor(win: Window, root: HTMLElement, index: number, chapter: boolea
   const number = /^\s*(\d+)[.．、)）]?/.exec(title?.textContent ?? '')?.[1] ?? String(index + 1);
   let stem = title ? questionText(title, images, false, reads).replace(/^\s*\d+[.．、)）]\s*/, '').replace(/^\s*[(（【][^\n)）】]*(?:题|名词解释|完形填空|阅读理解)[^\n)）】]*[)）】]\s*/, '').trim() : '';
   if (kind === 'line') {
-    stem += Array.from(root.querySelectorAll('.firstUlList,.secondUlList'), node => `\n${questionText(node, images, false, reads)}`).join('');
+    const columns = root.querySelectorAll('.firstUlList,.secondUlList,.line_wid_half.fl,.line_wid_half.fr');
+    stem += Array.from(columns, node => `\n${questionText(node, images, false, reads)}`).join('');
   }
   const sourceId = root.getAttribute('data-question-id') || root.querySelector<HTMLInputElement>('input[name=questionId]')?.value
     || typeNodes[0]?.id.replace(/^answertype/, '') || root.id;

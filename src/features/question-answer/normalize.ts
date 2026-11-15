@@ -37,8 +37,8 @@ function uniqueOption(value: string, options: QuestionOption[]): string | undefi
   return matching.length === 1 ? matching[0].id : undefined;
 }
 
-const trueWords = new Set(['对', '正确', '是', '√', 'true', 't', 'yes', '1', '對']);
-const falseWords = new Set(['错', '错误', '否', '×', 'x', 'false', 'f', 'no', '0', '錯']);
+const trueWords = new Set(['对', '正确', '是', '确定', '对的', '是的', '正确的', '√', 'true', 't', 'yes', '1', '對']);
+const falseWords = new Set(['错', '错误', '否', '非', '错的', '不对', '不正确的', '不正确', '不是', '不是的', '×', 'x', 'false', 'f', 'no', '0', '錯']);
 function booleanValue(value: string): boolean | undefined {
   const word = normalized(value).toLowerCase();
   return trueWords.has(word) ? true : falseWords.has(word) ? false : undefined;

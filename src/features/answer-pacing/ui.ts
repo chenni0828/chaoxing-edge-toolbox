@@ -2,11 +2,11 @@ import { readAnswerPacing, saveAnswerPacing, subscribeAnswerPacing } from './cli
 import { defaultAnswerPacing, validateAnswerPacing, type AnswerPacingPreferences } from './types';
 
 export function mountPacingSettings(root: HTMLElement): () => void {
-  root.innerHTML = `<div class="card"><div class="section-heading"><h2>答题速度</h2><p>请求频率在所有标签页之间共享；填写等待计入接口耗时。</p></div>
+  root.innerHTML = `<div class="card"><div class="section-heading"><h2>答题速度</h2><p>请求间隔按两次请求的开始时间计算。言溪和 AI 分别计时，同一服务的请求间隔由所有标签页共享。</p></div>
     <form class="settings-form">
       <div class="field"><label for="pacing-bank">言溪请求最小间隔（秒）</label><input id="pacing-bank" type="number" min="1" step="any" required disabled></div>
       <div class="field"><label for="pacing-ai">AI 请求最小间隔（秒）</label><input id="pacing-ai" type="number" min="1" step="any" required disabled></div>
-      <div class="field"><label for="pacing-fill">每题最低处理时间（秒）</label><input id="pacing-fill" type="number" min="0.001" step="any" required disabled><p class="field-help">默认 3 秒。接口耗时超过该值时直接填入；连续填写也保持此间隔。</p></div>
+      <div class="field"><label for="pacing-fill">每题最低处理时间（秒）</label><input id="pacing-fill" type="number" min="0" step="any" aria-describedby="pacing-fill-help" required disabled><p class="field-help" id="pacing-fill-help">默认 0 秒，答案就绪后无需额外等待。设为正值时，从开始处理本题计时，排队和接口耗时都计入；同一标签页的连续填写也受该间隔限制。</p></div>
       <div class="button-row"><button class="primary" type="submit" disabled>保存速度设置</button></div>
       <p class="feedback" role="status" aria-live="polite">正在读取速度设置…</p>
     </form></div>`;

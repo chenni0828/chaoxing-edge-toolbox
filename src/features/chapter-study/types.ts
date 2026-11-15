@@ -31,6 +31,7 @@ export interface StudyFrameSnapshot {
   chapterId?: string; attachmentJobIds?: string[];
 }
 export interface StudyTaskOutcome { status: 'acted' | 'skipped' | 'attention'; message: string; chapterIncomplete?: boolean }
+export interface ChapterTestOutcome extends StudyTaskOutcome { draftSaveUnconfirmed?: true }
 export interface StudyTaskProgress {
   runId: string; taskKey: string; documentKey: string; sequence: number;
   phase: 'verification' | 'recovering' | 'playing' | 'manual-play'; message: string;
