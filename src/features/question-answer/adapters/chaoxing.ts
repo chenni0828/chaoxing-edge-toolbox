@@ -6,7 +6,7 @@ import { disabled, imageAddress, isPageVisible, normalizeText, signature, visibl
 } from './shared';
 
 const documents = new WeakMap<Document, string>();
-const excluded = 'script,style,noscript,iframe,textarea,input,select,button,[data-cx-toolbox],#cx-toolbox-root,.stem_answer,.stem_answer2,.studentAnswer,.student-answer,.Py_answer,.mark_answer,.answer-analysis,.answerAnalysis,.analysis,.reference-answer,.colorShallow,.question-type,.question-number';
+const excluded = 'script,style,noscript,iframe,textarea,input,select,button,[data-cx-toolbox],#cx-toolbox-root,.stem_answer,.stem_answer2,.studentAnswer,.student-answer,.Py_answer,.mark_answer,.answer-analysis,.answerAnalysis,.analysis,.reference-answer,.colorShallow,.question-type,.question-number,.asFlagBtn';
 
 /** Only question-owned content is read; answer/editing areas are deliberately omitted. */
 type TextReads = Map<Node, QuestionTextRead & { original: string }>;
@@ -60,8 +60,9 @@ function makeChoices(nodes: HTMLElement[], root: Element, images: string[], chil
     const inputs = Array.from(state.querySelectorAll<HTMLInputElement>('input[type=radio],input[type=checkbox]'));
     const input = inputs.length === 1 ? inputs[0] : undefined;
     let text = questionText(element, images, false, reads);
+    const letter = !child ? state.querySelector('.saveSingleSelect[data]')?.getAttribute('data') ?? '' : '';
     const labelElement = state.querySelector('.before,.answerTag,.option-letter');
-    const label = child ? element.getAttribute('data') ?? '' : /^\s*([A-Z])(?:[.．、:：)）]|\s|$)/.exec(labelElement?.textContent ?? text)?.[1] ?? String.fromCharCode(65 + index);
+    const label = child ? element.getAttribute('data') ?? '' : /^[A-Z]$/.test(letter) ? letter : /^\s*([A-Z])(?:[.．、:：)）]|\s|$)/.exec(labelElement?.textContent ?? text)?.[1] ?? String.fromCharCode(65 + index);
     text = text.replace(/^\s*[A-Z][.．、:：)）]\s*/, '').trim();
     if (!text && state.querySelector('.ri')) text = '正确';
     if (!text && state.querySelector('.wr')) text = '错误';

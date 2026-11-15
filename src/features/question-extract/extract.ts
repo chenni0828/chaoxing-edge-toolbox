@@ -22,7 +22,7 @@ const EXCLUDED = [
   '.stem_answer', '.stem_answer2', '.proceduralQue', '.codeEditWrap',
   '.CodeMirror', '.ace_editor', '.answer-editor', '.answerEditor',
   '.studentAnswer', '.student-answer', '.answer', '.answer-content',
-  '.reference-answer', '.Py_answer', '.mark_answer',
+  '.reference-answer', '.Py_answer', '.mark_answer', '.asFlagBtn',
   '.answer-analysis', '.answerAnalysis', '.analysis', '.eidt_button',
   '.compilation_result', '.result-container', '.maskBox',
   '[data-cx-toolbox]', '#cx-toolbox-root',
@@ -212,7 +212,9 @@ function render(node: Node, context: Context): string {
   const text = children(element, context);
   if (element.matches('.saveSingleSelect[data]')) {
     const label = element.getAttribute('data') ?? '';
-    return `\n\n${/^[A-Z]$/.test(label) ? `${label}. ` : ''}${text}\n\n`;
+    // On exam pages the span holds only the letter; don't repeat it after the label.
+    const body = /^[A-Z]$/.test(label) && text.trim() === label ? '' : text;
+    return `\n\n${/^[A-Z]$/.test(label) ? `${label}. ` : ''}${body}\n\n`;
   }
   if (tag === 'A') {
     const url = safeUrl(element.getAttribute('href'), context.baseUrl);
@@ -280,7 +282,7 @@ export function extractQuestions(root: Document | Element, baseUrl?: string): Ex
     // Observed chapter controls can omit Zy_ulTop, while homework uses answer_p rows.
     if (container.matches('.TiMu')) candidates.push(...Array.from(container.querySelectorAll('ul')).filter(list => list.querySelector('li .after')));
     if (container.matches('.questionLi')) candidates.push(...Array.from(container.querySelectorAll('.answerBg .answer_p')).map(option => {
-      const row = option.closest('li');
+      const row = option.closest('li,.answerBg');
       return row && row !== container && container.contains(row) ? row : option;
     }));
     const optionBlocks = [...new Set(candidates)]
