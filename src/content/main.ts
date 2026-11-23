@@ -3,12 +3,14 @@ import { getPageFeatures } from '../features/page-registry';
 import { bridgeMessage, installMainBridge } from '../shared/bridge';
 import { readUeditorAnswer, writeUeditorAnswer } from '../features/ai-answer/editor';
 import { handleStudyPageRequest } from '../features/chapter-study/page';
+import { installPdfReaderBridge } from '../features/chapter-study/pdf-reader';
 import { getDocumentPlatform } from '../shared/sites';
 import { handleAnswerPageCommand } from '../features/question-answer/page';
 
 function install(): void {
   const platform = getDocumentPlatform(window);
   if (platform?.id !== 'chaoxing') return;
+  installPdfReaderBridge(window);
   const manager = new FeatureManager(window, getPageFeatures(platform?.id));
   let revision = 0;
 

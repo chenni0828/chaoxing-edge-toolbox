@@ -38,7 +38,7 @@ export const FEATURES = [
     id: 'chapter-study',
     supportedPlatforms: ['chaoxing'],
     title: '章节学习',
-    description: '独立管理视频、课件与阅读任务的章节学习流程。',
+    description: '独立管理视频、PDF 课件与阅读任务的章节学习流程。',
     category: '学习辅助',
     defaultEnabled: true,
   },

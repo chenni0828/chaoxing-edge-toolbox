@@ -1,8 +1,9 @@
 /**
- * 章节详情页的任务动作：媒体播放、课件翻页、书籍与链接阅读。
+ * 章节详情页的任务动作：媒体播放、PDF 滚动、课件翻页、书籍与链接阅读。
  * 只依赖平台公开的 DOM 结构与播放器接口，无法继续时保留人工处理。
  */
 import type { DiscoveredStudyTask, StudyPageWindow } from './discovery';
+import { findPdfReaderFrame, isPdfCoursewareWindow, scrollPdfReaderToBottom } from './pdf-reader';
 import { StudyTaskScope } from './task-scope';
 import type { StudyPreferences, StudyTaskOutcome, StudyTaskProgress } from './types';
 
@@ -474,12 +475,47 @@ async function runMedia(entry: DiscoveredStudyTask, scope: StudyTaskScope, prefe
   });
 }
 
-async function runCourseware(win: StudyPageWindow, scope: StudyTaskScope): Promise<StudyTaskOutcome> {
+async function waitForPdfReader(win: StudyPageWindow, scope: StudyTaskScope): Promise<HTMLIFrameElement | undefined> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    scope.check();
+    const frame = findPdfReaderFrame(win.document);
+    if (frame?.contentWindow) return frame;
+    await scope.wait(200);
+  }
+  return undefined;
+}
+
+async function finishCoursewareJob(win: StudyPageWindow, scope: StudyTaskScope): Promise<StudyTaskOutcome> {
   if (typeof win.finishJob !== 'function') return attention('当前课件缺少 finishJob 接口，请手动完成阅读。');
   scope.check();
   win.finishJob();
   await scope.wait(3000);
   return acted('已调用课件阅读接口，等待目录绿勾确认。');
+}
+
+async function runPdfCourseware(win: StudyPageWindow, scope: StudyTaskScope): Promise<StudyTaskOutcome> {
+  const frame = await waitForPdfReader(win, scope);
+  if (!frame) {
+    if (typeof win.finishJob === 'function' && win.document.querySelector('#img.imglook img')) {
+      return finishCoursewareJob(win, scope);
+    }
+    return attention('PDF 阅读器尚未加载完成，请稍后重试。');
+  }
+  try {
+    await scrollPdfReaderToBottom(frame, scope.signal);
+  } catch (error) {
+    if (scope.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) throw error;
+    return attention(error instanceof Error && error.message ? error.message : 'PDF 未能自动滚动到底部，请手动完成。');
+  }
+  scope.check();
+  await scope.wait(3000);
+  return acted('已将 PDF 滚动到最下面，等待平台确认。');
+}
+
+async function runCourseware(win: StudyPageWindow, scope: StudyTaskScope): Promise<StudyTaskOutcome> {
+  if (isPdfCoursewareWindow(win) || findPdfReaderFrame(win.document)) return runPdfCourseware(win, scope);
+  return finishCoursewareJob(win, scope);
 }
 
 async function runAudioPpt(win: StudyPageWindow, scope: StudyTaskScope): Promise<StudyTaskOutcome> {
