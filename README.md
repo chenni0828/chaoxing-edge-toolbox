@@ -1,10 +1,8 @@
 # 学习工具箱（Edge 扩展）
 
-基于学习工具箱（chaoxing-edge-toolbox），原作者 chenni0828。[原仓库](https://github.com/chenni0828/chaoxing-edge-toolbox)
-
-项目源码采用 [GPLv3](LICENSE)，署名附加条款见 [NOTICE](NOTICE)。
-
 一个面向学习通与浙学的浏览器工具箱，把常用的页面辅助、题目处理和章节学习能力集中到悬浮面板中。项目使用 TypeScript + Manifest V3，构建后可直接在 Edge / Chrome 中加载。
+
+本项目采用 [GPLv3](LICENSE) 开源，转载或二次分发时的署名要求见 [NOTICE](NOTICE)。
 
 > 本项目是个人学习辅助工具，与学习通、浙学官方无关。请遵守所在学校和平台的使用规定，自行承担使用风险。
 
