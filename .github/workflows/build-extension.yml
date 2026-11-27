@@ -18,6 +18,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: ${{ startsWith(github.ref, 'refs/tags/v') && 0 || 1 }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -43,11 +44,25 @@ jobs:
           NODE
       - name: 打包扩展
         run: node scripts/package.mjs
+      - name: 生成正式版发布说明
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_REPO: ${{ github.repository }}
+        run: node scripts/release-notes.mjs --tag "$GITHUB_REF_NAME" --repo "$GH_REPO" --out release/RELEASE_NOTES.md
       - name: 上传可下载扩展包
         uses: actions/upload-artifact@v4
         with:
           name: chaoxing-edge-toolbox-${{ github.sha }}
           path: release/*.zip
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+      - name: 上传正式版发布说明
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes-${{ github.sha }}
+          path: release/RELEASE_NOTES.md
           if-no-files-found: error
           retention-days: 30
           overwrite: true
@@ -66,6 +81,10 @@ jobs:
         with:
           name: chaoxing-edge-toolbox-${{ github.sha }}
           path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes-${{ github.sha }}
+          path: release
       - name: 发布可直接解压的正式版 ZIP
         env:
           GH_TOKEN: ${{ github.token }}
@@ -77,7 +96,9 @@ jobs:
           tag="$GITHUB_REF_NAME"
           name="chaoxing-edge-toolbox-${tag#v}.zip"
           archive="release/$name"
+          notes="release/RELEASE_NOTES.md"
           test -s "$archive"
+          test -s "$notes"
           if [[ "$(gh api "repos/$GH_REPO/commits/$tag" --jq .sha)" != "$BUILD_COMMIT" ]]; then
             echo "::error::标签已移动，当前标签与安装包的源码提交不一致。"
             exit 1
@@ -87,10 +108,10 @@ jobs:
           existing=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" |
             jq -cs --arg tag "$tag" '[.[][] | select(.tag_name == $tag)] | if length > 1 then error("duplicate release tag") else .[0] end')
           if [[ "$existing" == null ]]; then
-            gh release create "$tag" "$archive" --verify-tag --generate-notes --title "$tag"
+            gh release create "$tag" "$archive" --verify-tag --notes-file "$notes" --title "$tag"
           elif jq -e '.draft' <<< "$existing" >/dev/null; then
             gh release upload "$tag" "$archive" --clobber
-            gh release edit "$tag" --verify-tag --prerelease=false --draft=false
+            gh release edit "$tag" --verify-tag --notes-file "$notes" --prerelease=false --draft=false
           else
             # A completed release is immutable from this workflow, even on a full rerun.
             jq -e --arg name "$name" '.prerelease == false and any(.assets[]; .name == $name and .state == "uploaded" and .size > 0)' <<< "$existing" >/dev/null || {
