@@ -1,3 +1,4 @@
+// Licensed under GPLv3. See NOTICE for the Section 7(b) attribution terms.
 import { canAccess, privateStorageReady, type BackgroundRoutes } from '../core/background-context';
 import { apiSettingsRoutes, subscribeStoredApi } from '../features/api-settings/background';
 import { installAiGenerationBroker } from '../features/ai-answer/background';

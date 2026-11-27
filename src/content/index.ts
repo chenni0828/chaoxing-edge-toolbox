@@ -1,3 +1,4 @@
+// Licensed under GPLv3. See NOTICE for the Section 7(b) attribution terms.
 import { requestExtension } from '../core/extension-rpc';
 import { createAiAnswerController } from '../features/ai-answer/controller';
 import { generateAnswer } from '../features/ai-answer/client';

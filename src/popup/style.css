@@ -42,6 +42,10 @@ main { padding: 12px; }
 .feedback { margin-top: 12px; padding: 9px 10px; border: 1px solid var(--tint-border); border-radius: var(--radius-md); background: var(--tint-bg); color: var(--primary-hover); font-size: 12px; line-height: 1.65; white-space: pre-line; overflow-wrap: anywhere; }
 .feedback[data-kind="error"] { background: var(--error-bg); border: 1px solid var(--error-border); color: var(--error-text); }
 
+.update-notice { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; padding: 0 10px; background: var(--tint-bg); border: 1px solid var(--tint-border); border-radius: var(--radius-md); color: var(--text-title); font-size: 12px; }
+.update-notice a { display: inline-flex; align-items: center; min-height: var(--control-height); flex: 0 0 auto; color: var(--primary); font-weight: 500; text-underline-offset: 2px; }
+.update-notice a:hover { color: var(--primary-hover); }
+
 .footnote { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-inner); color: var(--text-muted); font-size: 11px; line-height: 1.65; }
 .footnote .version { font-family: Consolas, monospace; }
 button { transition: background-color 140ms, color 140ms, border-color 140ms, box-shadow 140ms; }

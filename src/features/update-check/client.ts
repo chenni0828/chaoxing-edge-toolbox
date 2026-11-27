@@ -8,3 +8,7 @@ export function readUpdateSnapshot(): Promise<UpdateSnapshot> {
 export function checkUpdateSnapshot(): Promise<UpdateSnapshot> {
   return requestExtension<UpdateSnapshot>('toolbox:update:check');
 }
+
+export function checkPopupUpdateSnapshot(): Promise<UpdateSnapshot | null> {
+  return requestExtension<UpdateSnapshot | null>('toolbox:update:popup');
+}

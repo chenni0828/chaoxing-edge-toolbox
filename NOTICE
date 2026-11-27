@@ -1,0 +1,15 @@
+学习工具箱（chaoxing-edge-toolbox）
+Copyright (C) 2026 chenni0828
+
+本项目按 GNU 通用公共许可证第 3 版（GPLv3）授权，并适用以下
+依据 GPLv3 第 7(b) 条订立的署名条款。
+
+转载或分发本项目（包括分发修改版）时，须保留下列署名及原仓库链接。
+可将其放在扩展弹窗的显眼位置（例如清晰可见的「关于」区域），
+或随所分发版本一同提供的 README 的显眼位置，任选一处。
+
+基于学习工具箱（chaoxing-edge-toolbox），原作者 chenni0828。
+原仓库：https://github.com/chenni0828/chaoxing-edge-toolbox
+
+第三方组件继续适用各自的许可。安装 ZIP 中的
+third-party/fflate-LICENSE 包含所捆绑的 fflate 的许可与版权声明。

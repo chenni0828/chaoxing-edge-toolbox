@@ -21,4 +21,12 @@ function getService(): ReturnType<typeof createUpdateService> {
 export const updateCheckRoutes: BackgroundRoutes = {
   'toolbox:update:read': { access: 'options', handle: async () => getService().read() },
   'toolbox:update:check': { access: 'options', handle: async () => getService().check() },
+  'toolbox:update:popup': {
+    access: 'popup',
+    handle: async (_message, sender) => getService().checkOnPopup(async () => {
+      if (!sender.documentId) return false;
+      const contexts = await chrome.runtime.getContexts({ documentIds: [sender.documentId] });
+      return contexts.length > 0;
+    }),
+  },
 };

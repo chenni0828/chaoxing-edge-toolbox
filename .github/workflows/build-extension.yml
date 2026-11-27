@@ -3,6 +3,7 @@ name: 构建 Edge 扩展
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -11,8 +12,12 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.build.outputs.commit }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -20,7 +25,22 @@ jobs:
       - name: 安装依赖
         run: npm ci
       - name: 检查并构建 dist
-        run: npm run check
+        id: build
+        run: |
+          commit=$(git rev-parse --verify 'HEAD^{commit}')
+          TOOLBOX_BUILD_COMMIT="$commit" npm run check
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - name: 核对正式版标签与版本号
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+          const build = JSON.parse(readFileSync('dist/build-info.json', 'utf8'));
+          if (process.env.GITHUB_REF_NAME !== `v${version}` || build.source !== 'github-release') {
+            throw new Error(`标签 ${process.env.GITHUB_REF_NAME} 必须与 package.json 版本 v${version} 一致，并由本仓库正式构建生成。`);
+          }
+          NODE
       - name: 打包扩展
         run: node scripts/package.mjs
       - name: 上传可下载扩展包
@@ -30,3 +50,52 @@ jobs:
           path: release/*.zip
           if-no-files-found: error
           retention-days: 30
+          overwrite: true
+
+  publish:
+    needs: build
+    if: github.event_name == 'push' && github.event.created && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: chaoxing-edge-toolbox-${{ github.sha }}
+          path: release
+      - name: 发布可直接解压的正式版 ZIP
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_COMMIT: ${{ needs.build.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          name="chaoxing-edge-toolbox-${tag#v}.zip"
+          archive="release/$name"
+          test -s "$archive"
+          if [[ "$(gh api "repos/$GH_REPO/commits/$tag" --jq .sha)" != "$BUILD_COMMIT" ]]; then
+            echo "::error::标签已移动，当前标签与安装包的源码提交不一致。"
+            exit 1
+          fi
+
+          # Include drafts so an interrupted upload can be resumed on rerun.
+          existing=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" |
+            jq -cs --arg tag "$tag" '[.[][] | select(.tag_name == $tag)] | if length > 1 then error("duplicate release tag") else .[0] end')
+          if [[ "$existing" == null ]]; then
+            gh release create "$tag" "$archive" --verify-tag --generate-notes --title "$tag"
+          elif jq -e '.draft' <<< "$existing" >/dev/null; then
+            gh release upload "$tag" "$archive" --clobber
+            gh release edit "$tag" --verify-tag --prerelease=false --draft=false
+          else
+            # A completed release is immutable from this workflow, even on a full rerun.
+            jq -e --arg name "$name" '.prerelease == false and any(.assets[]; .name == $name and .state == "uploaded" and .size > 0)' <<< "$existing" >/dev/null || {
+              echo "::error::该标签已有公开 Release，但缺少预期正式版安装包。请使用新版本号重新发布。"
+              exit 1
+            }
+            echo "$tag 已发布。"
+          fi

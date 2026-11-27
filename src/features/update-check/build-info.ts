@@ -1,24 +1,21 @@
-import { UPDATE_BRANCH, UPDATE_REPOSITORY, UPDATE_WORKFLOW, type BuildInfo } from './types';
+import { isReleaseVersion, UPDATE_REPOSITORY, type BuildInfo } from './types';
 
 export { UPDATE_API_ORIGIN } from './types';
 
 /** Build output only: never infer an official release from the local Git checkout. */
-export function createBuildInfo(version: string, environment: Record<string, string | undefined>, builtAt = new Date().toISOString()): BuildInfo {
-  const local: BuildInfo = { schemaVersion: 1, version, source: 'local', builtAt };
-  const runId = Number(environment.GITHUB_RUN_ID);
+export function createBuildInfo(version: string, environment: Record<string, string | undefined>): BuildInfo {
+  const local: BuildInfo = { version, source: 'local' };
+  const commit = environment.TOOLBOX_BUILD_COMMIT ?? environment.GITHUB_SHA;
+  const ref = environment.GITHUB_REF;
   if (environment.GITHUB_ACTIONS !== 'true'
     || environment.GITHUB_REPOSITORY !== UPDATE_REPOSITORY
-    || environment.GITHUB_REF !== `refs/heads/${UPDATE_BRANCH}`
-    || environment.GITHUB_WORKFLOW_REF !== `${UPDATE_REPOSITORY}/${UPDATE_WORKFLOW}@refs/heads/${UPDATE_BRANCH}`
-    || !/^[a-f0-9]{40}$/.test(environment.GITHUB_SHA ?? '')
-    || !Number.isSafeInteger(runId) || runId <= 0) return local;
-  return {
-    ...local,
-    source: 'github-actions',
-    repository: UPDATE_REPOSITORY,
-    branch: UPDATE_BRANCH,
-    workflow: UPDATE_WORKFLOW,
-    commit: environment.GITHUB_SHA,
-    runId,
-  };
+    || !ref || !/^[a-f0-9]{40}$/i.test(commit ?? '')) return local;
+  const normalizedCommit = commit!.toLowerCase();
+  if (ref === `refs/tags/v${version}` && isReleaseVersion(version)) {
+    return { version, source: 'github-release', commit: normalizedCommit };
+  }
+  if (ref === 'refs/heads/main') {
+    return { version, source: 'github-actions', commit: normalizedCommit };
+  }
+  return local;
 }

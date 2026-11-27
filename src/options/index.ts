@@ -1,3 +1,4 @@
+// Licensed under GPLv3. See NOTICE for the Section 7(b) attribution terms.
 import { mountApiSettings } from '../features/api-settings/ui';
 import { mountAppearanceSettings } from '../features/floating-toolbox/appearance-ui';
 import { mountToolboxSettings } from '../features/toolbox-settings/ui';

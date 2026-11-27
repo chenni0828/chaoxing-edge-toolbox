@@ -1,5 +1,9 @@
 # 学习工具箱（Edge 扩展）
 
+基于学习工具箱（chaoxing-edge-toolbox），原作者 chenni0828。[原仓库](https://github.com/chenni0828/chaoxing-edge-toolbox)
+
+项目源码采用 [GPLv3](LICENSE)，署名附加条款见 [NOTICE](NOTICE)。
+
 一个面向学习通与浙学的浏览器工具箱，把常用的页面辅助、题目处理和章节学习能力集中到悬浮面板中。项目使用 TypeScript + Manifest V3，构建后可直接在 Edge / Chrome 中加载。
 
 > 本项目是个人学习辅助工具，与学习通、浙学官方无关。请遵守所在学校和平台的使用规定，自行承担使用风险。
@@ -14,7 +18,19 @@
 
 ## 安装
 
-需要 Node.js 22 或更新版本：
+1. 在项目的 Releases 页面打开最新正式版，从 **Assets** 下载 `chaoxing-edge-toolbox-<版本号>.zip`。首次正式发布前可按下方「本地开发」步骤安装。[GitHub Releases](https://github.com/chenni0828/chaoxing-edge-toolbox/releases)
+2. 将 ZIP 解压到一个固定目录。打开 `edge://extensions`（Chrome 使用 `chrome://extensions`），开启「开发人员模式」。
+3. 点「加载解压缩的扩展」，选择直接包含 `manifest.json` 的目录，然后刷新已打开的学习页面。
+
+## 更新
+
+打开扩展弹窗时，工具箱会向 GitHub 检查最新正式版。每个滚动的 24 小时内最多自动联网检查一次，有新版时最多提示一次。需要立即核对时，可以在设置页点击「检查更新」。
+
+升级时，从正式版下载 ZIP，将内容解压并覆盖**原安装目录**，确认新的 `manifest.json` 位于原位置。在扩展管理页点「重新加载」，再刷新已打开的学习页面。原先从 Actions 安装、设置页仍指向旧构建页面的用户，也可以按这个步骤切换到正式版。[正式版下载](https://github.com/chenni0828/chaoxing-edge-toolbox/releases/latest)
+
+## 本地开发
+
+使用 Node.js 22 或更新版本构建扩展。
 
 ```bash
 npm ci
@@ -32,6 +48,13 @@ npm run build
 | `npm run package` | 检查、构建并生成发布 ZIP |
 
 修改源码后需要**重新构建 → 在扩展页重载扩展 → 刷新目标网页**，三步缺一不可。
+
+### 发布正式版
+
+1. 将 `package.json` 的 `version` 提升到新版本，并同步 `package-lock.json`。可用 `npm version patch --no-git-tag-version` 升级修订号。使用浏览器扩展支持的点分数字版本，例如 `0.2.1`。
+2. 运行 `npm run check`，提交版本变更并推送到 `main`。每次主分支推送都会生成保留 30 天的 Actions 测试包。
+3. 在要发布的提交上创建并推送与版本完全匹配的标签，例如版本为 `0.2.1` 时执行 `git tag v0.2.1` 和 `git push origin v0.2.1`。标签工作流重新检查、构建并将单层扩展 ZIP 附加到 GitHub Release。正式版使用 Release 附件供用户下载。
+4. 发布中断可在 Actions 中重跑原工作流。已完成的公开版本会保留原包，需要修正已发布内容时，请提升版本并创建新标签。
 
 ## 使用
 

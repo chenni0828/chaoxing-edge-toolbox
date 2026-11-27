@@ -1,6 +1,6 @@
 import { getPlatform, isSupportedUrl, type PlatformId } from '../shared/sites';
 
-export type RouteAccess = 'public' | 'options' | 'top-page';
+export type RouteAccess = 'public' | 'options' | 'popup' | 'top-page';
 export interface BackgroundRoute {
   access: RouteAccess;
   platforms?: readonly PlatformId[];
@@ -28,8 +28,8 @@ export function isSupportedContent(sender: chrome.runtime.MessageSender, platfor
 
 export function canAccess(access: RouteAccess, sender: chrome.runtime.MessageSender, platforms?: readonly PlatformId[]): boolean {
   if (sender.id !== chrome.runtime.id) return false;
-  if (access === 'options') {
-    return isExtensionPage(sender) && sender.url?.split(/[?#]/)[0] === chrome.runtime.getURL('options/index.html');
+  if (access === 'options' || access === 'popup') {
+    return sender.url?.split(/[?#]/)[0] === chrome.runtime.getURL(`${access}/index.html`);
   }
   if (!isExtensionPage(sender) && platforms && !platforms.some(platform => isSupportedContent(sender, platform))) return false;
   if (access === 'top-page') return isSupportedContent(sender) && sender.frameId === 0;

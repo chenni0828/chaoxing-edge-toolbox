@@ -1,3 +1,4 @@
+// Licensed under GPLv3. See NOTICE for the Section 7(b) attribution terms.
 import { FeatureManager } from '../core/feature-manager';
 import { getPageFeatures } from '../features/page-registry';
 import { bridgeMessage, installMainBridge } from '../shared/bridge';
